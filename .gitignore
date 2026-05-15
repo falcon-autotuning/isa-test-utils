@@ -1,5 +1,6 @@
 .nuget-credentials
 my-vcpkg-triplets/
+compile-commands.json
 vcpkg/
 # Byte-compiled / optimized / DLL files
 __pycache__/
