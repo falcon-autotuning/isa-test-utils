@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.20)
 project(
   isa-test-utils
   VERSION 1.0.0
-  DESCRIPTION "The set of configurations and plugins for running instruments"
+  DESCRIPTION "A set of utilities to help with writing tests for instruments and plugins for the instrument-script-server"
   HOMEPAGE_URL "https://github.com/falcon-autotuning/isa-test-utils"
   LANGUAGES C
 )

@@ -1,8 +1,8 @@
 {
-  "name": "sim900-instrument",
+  "name": "isa-test-utils",
   "version": "1.0.0",
-  "description": "The set of configurations and plugins for running instruments",
-  "homepage": "https://github.com/falcon-autotuning/sim900-instrument",
+  "description": "A set of utilities to help with writing tests for instruments and plugins for the instrument-script-server",
+  "homepage": "https://github.com/falcon-autotuning/isa-test-utils",
   "dependencies": [
     {
       "name": "glib"
