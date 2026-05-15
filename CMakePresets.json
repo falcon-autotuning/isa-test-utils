@@ -12,7 +12,6 @@
         "VCPKG_ROOT": "${sourceDir}/vcpkg",
         "VCPKG_INSTALLED_DIR": "${sourceDir}/vcpkg_installed",
         "VCPKG_OVERLAY_TRIPLETS": "${sourceDir}/my-vcpkg-triplets",
-        "VCPKG_OVERLAY_PORTS": "${sourceDir}/ports",
         "CMAKE_MAKE_PROGRAM": "ninja",
         "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
         "USE_CCACHE": "ON",
@@ -27,7 +26,7 @@
       "inherits": "default",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug",
-        "CMAKE_C_COMPILER": "clang",
+        "CMAKE_C_COMPILER": "/usr/bin/clang",
         "VCPKG_TARGET_TRIPLET": "x64-linux-dynamic",
         "CMAKE_PREFIX_PATH": "${sourceDir}/vcpkg_installed/x64-linux-dynamic/share;${sourceDir}/vcpkg_installed",
         "CMAKE_EXE_LINKER_FLAGS": "-fuse-ld=lld",
@@ -40,7 +39,7 @@
       "inherits": "default",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",
-        "CMAKE_C_COMPILER": "clang",
+        "CMAKE_C_COMPILER": "/usr/bin/clang",
         "VCPKG_TARGET_TRIPLET": "x64-linux-dynamic",
         "CMAKE_PREFIX_PATH": "${sourceDir}/vcpkg_installed/x64-linux-dynamic/share;${sourceDir}/vcpkg_installed",
         "CMAKE_EXE_LINKER_FLAGS": "-fuse-ld=lld",
