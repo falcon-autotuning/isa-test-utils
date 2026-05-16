@@ -1,5 +1,6 @@
 #pragma once
 
+#include "isa-test-utils/isa-test-utils-export.h"
 #include <glib.h>
 
 /*
@@ -12,7 +13,7 @@ typedef struct {
   const char *template_expander_path;
 } SetupConfig;
 
-void setup_set_config(const SetupConfig *config);
+ISA_TEST_UTILS_EXPORT void setup_set_config(const SetupConfig *config);
 
 typedef struct {
   char *first;
@@ -38,19 +39,21 @@ typedef struct {
   char *plugin_dir; // NULL if none
 } PrepareEnvironmentResult;
 
-char *prepare_isa_directory(GPtrArray *files, GPathBuf *root);
+ISA_TEST_UTILS_EXPORT char *prepare_isa_directory(GPtrArray *files,
+                                                  GPathBuf *root);
 
-char *prepare_config_directory(GPtrArray *files, GPathBuf *root,
-                               GPtrArray *replacements);
+ISA_TEST_UTILS_EXPORT char *prepare_config_directory(GPtrArray *files,
+                                                     GPathBuf *root,
+                                                     GPtrArray *replacements);
 
-char *prepare_plugin_directory(GPtrArray *files, GPathBuf *root);
+ISA_TEST_UTILS_EXPORT char *prepare_plugin_directory(GPtrArray *files,
+                                                     GPathBuf *root);
 
-PrepareEnvironmentResult
-prepare_full_environment_bundle(const EmbeddedBundle *bundle,
-                                GPtrArray *replacements);
+ISA_TEST_UTILS_EXPORT PrepareEnvironmentResult prepare_full_environment_bundle(
+    const EmbeddedBundle *bundle, GPtrArray *replacements);
 
-void cleanup_environment(PrepareEnvironmentResult *env);
+ISA_TEST_UTILS_EXPORT void cleanup_environment(PrepareEnvironmentResult *env);
 
-char *get_required_env_string(const char *name);
-int get_required_env_int(const char *name);
-char *yaml_quote(const char *value);
+ISA_TEST_UTILS_EXPORT char *get_required_env_string(const char *name);
+ISA_TEST_UTILS_EXPORT int get_required_env_int(const char *name);
+ISA_TEST_UTILS_EXPORT char *yaml_quote(const char *value);
