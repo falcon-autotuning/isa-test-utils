@@ -85,7 +85,19 @@ ProcessResult run_executable(const char *exe, GPtrArray *args) {
 }
 
 ProcessResult run_iss(GPtrArray *args) {
-  return run_executable(g_config.instrument_server_path, args);
+  const char *exe = g_config.instrument_server_path
+                        ? g_config.instrument_server_path
+                        : "instrument-script-server";
+
+  ProcessResult r = run_executable(exe, args);
+
+  if (r.exit_code == -1) {
+    g_free(r.stderr_data);
+    r.stderr_data = g_strdup_printf(
+        "%s not found in PATH. Ensure it is installed correctly.", exe);
+  }
+
+  return r;
 }
 
 /* ================================
