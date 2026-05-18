@@ -82,7 +82,7 @@ install(FILES
   DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/isa-test-utils
 )
 install(FILES cmake/embed_bundle.cmake
-  DESTINATION ${CMAKE_INSTALL_LIBDIR}/isa-test-utils
+  DESTINATION ${CMAKE_INSTALL_DATADIR}/isa-test-utils
 )
 install(TARGETS isa-test-utils
   EXPORT isa-test-utils-targets
