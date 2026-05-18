@@ -8,36 +8,23 @@ function(embed_bundle)
     message(FATAL_ERROR "embed_bundle: OUTPUT required")
   endif()
 
-  file(WRITE ${EMBED_OUTPUT} "#pragma once\n#include <glib.h>\n\n")
-
-  # ================================
-  # Structs
-  # ================================
-  file(APPEND ${EMBED_OUTPUT} "
-typedef struct {
-  const char *relative_path;
-  const unsigned char *data;
-  unsigned int size;
-} EmbeddedFile;
-
-typedef struct {
-  GPtrArray *isa_files;
-  GPtrArray *config_files;
-  GPtrArray *plugin_files;
-} EmbeddedBundle;
-")
+  file(WRITE ${EMBED_OUTPUT}
+  "#pragma once\n"
+  "#include <glib.h>\n"
+  "#include <isa-test-utils/setup.h>\n\n"
+  )
 
   # ================================
   # Helper macro: embed files
   # ================================
   macro(EMBED_CATEGORY FILE_LIST CATEGORY_NAME)
     foreach(f ${${FILE_LIST}})
-      file(RELATIVE_PATH rel ${CMAKE_CURRENT_SOURCE_DIR} ${f})
+      file(RELATIVE_PATH rel "${CMAKE_CURRENT_SOURCE_DIR}" "${f}")
 
       string(REPLACE "/" "_" sym ${rel})
       string(REPLACE "." "_" sym ${sym})
 
-      set(tmp "${CMAKE_BINARY_DIR}/${sym}.h")
+      set(tmp "${CMAKE_CURRENT_BINARY_DIR}/${sym}.h")
 
       execute_process(COMMAND xxd -i ${f} ${tmp})
 
