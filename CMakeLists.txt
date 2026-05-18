@@ -82,7 +82,7 @@ install(FILES
   DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/isa-test-utils
 )
 install(FILES cmake/embed_bundle.cmake
-  DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/isa-test-utils
+  DESTINATION ${CMAKE_INSTALL_LIBDIR}/isa-test-utils
 )
 install(TARGETS isa-test-utils
   EXPORT isa-test-utils-targets
@@ -94,7 +94,7 @@ install(TARGETS isa-test-utils
 install(EXPORT isa-test-utils-targets
   FILE isa-test-utils-targets.cmake
   NAMESPACE isa-test-utils::
-  DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/isa-test-utils
+  DESTINATION ${CMAKE_INSTALL_DATADIR}/isa-test-utils
 )
 write_basic_package_version_file(
   "${CMAKE_CURRENT_BINARY_DIR}/isa-test-utils-config-version.cmake"
@@ -104,12 +104,12 @@ write_basic_package_version_file(
 configure_package_config_file(
   cmake/isa-test-utils-config.cmake.in
   "${CMAKE_CURRENT_BINARY_DIR}/isa-test-utils-config.cmake"
-  INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/isa-test-utils
+  INSTALL_DESTINATION ${CMAKE_INSTALL_DATADIR}/isa-test-utils
 )
 install(FILES
   "${CMAKE_CURRENT_BINARY_DIR}/isa-test-utils-config.cmake"
   "${CMAKE_CURRENT_BINARY_DIR}/isa-test-utils-config-version.cmake"
-  DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/isa-test-utils
+  DESTINATION ${CMAKE_INSTALL_DATADIR}/isa-test-utils
 )
 
 if(CMAKE_GENERATOR STREQUAL "Ninja" AND WIN32)
