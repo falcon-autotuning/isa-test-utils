@@ -1,6 +1,7 @@
 #include "isa-test-utils/run.h"
 #include <glib.h>
 #include <glib/gstdio.h>
+#include <unistd.h>
 
 /* ================================
    Config (Dependency Injection)
@@ -184,7 +185,7 @@ void stop_instrument(const char *name) {
    Measurement
 ================================ */
 
-char *perform_measurement(const char *script, const char *json) {
+static char *perform_measurement(const char *script, const char *json) {
   GPtrArray *args = g_ptr_array_new();
 
   g_ptr_array_add(args, "measure");
@@ -205,10 +206,18 @@ char *perform_measurement(const char *script, const char *json) {
 }
 
 char *perform_measurement_from_script(const char *contents, const char *json) {
-  gchar *tmp =
-      g_strdup_printf("%s/script-%u.lua", g_get_tmp_dir(), g_random_int());
+  GError *error = NULL;
+  char *tmp = NULL;
 
-  g_file_set_contents(tmp, contents, -1, NULL);
+  int fd = g_file_open_tmp("iss-script-XXXXXX.lua", &tmp, &error);
+  if (fd < 0) {
+    g_error("Failed to create temp script: %s", error->message);
+  }
+  close(fd);
+
+  if (!g_file_set_contents(tmp, contents, -1, &error)) {
+    g_error("Failed to write script: %s", error->message);
+  }
 
   char *out = perform_measurement(tmp, json);
 

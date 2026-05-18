@@ -57,3 +57,5 @@ ISA_TEST_UTILS_EXPORT void cleanup_environment(PrepareEnvironmentResult *env);
 ISA_TEST_UTILS_EXPORT char *get_required_env_string(const char *name);
 ISA_TEST_UTILS_EXPORT int get_required_env_int(const char *name);
 ISA_TEST_UTILS_EXPORT char *yaml_quote(const char *value);
+// contents are the contents of the file and it returns the path to the file
+ISA_TEST_UTILS_EXPORT char *write_script_to_temp(const char *contents);

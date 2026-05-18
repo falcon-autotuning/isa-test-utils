@@ -202,7 +202,7 @@ prepare_full_environment_bundle(const EmbeddedBundle *bundle,
   g_path_buf_init_from_path(&root, g_get_tmp_dir());
   g_path_buf_push(&root, "test_env");
 
-  result.root_dir = g_path_buf_free_to_path(&root);
+  result.root_dir = g_path_buf_to_path(&root);
 
   g_mkdir_with_parents(result.root_dir, 0755);
 
@@ -222,9 +222,16 @@ prepare_full_environment_bundle(const EmbeddedBundle *bundle,
     g_error("Missing config files");
   }
 
+  GPtrArray *local_repl = replacements;
+  gboolean need_free = FALSE;
+
+  if (!local_repl) {
+    local_repl = g_ptr_array_new();
+    need_free = TRUE;
+  }
+
   result.config_dir =
-      prepare_config_directory(bundle->config_files, &root,
-                               replacements ? replacements : g_ptr_array_new());
+      prepare_config_directory(bundle->config_files, &root, local_repl);
 
   /* =============================
      Plugin (optional)
@@ -234,20 +241,64 @@ prepare_full_environment_bundle(const EmbeddedBundle *bundle,
   } else {
     result.plugin_dir = NULL;
   }
+  g_path_buf_clear(&root);
+
+  if (need_free)
+    g_ptr_array_free(local_repl, TRUE);
 
   return result;
+}
+#include <gio/gio.h>
+
+/* Recursively delete a directory */
+static void remove_dir_recursive(const char *path) {
+  GError *error = NULL;
+
+  GFile *root = g_file_new_for_path(path);
+
+  GFileEnumerator *enumerator = g_file_enumerate_children(
+      root, "standard::*", G_FILE_QUERY_INFO_NONE, NULL, &error);
+
+  if (!enumerator) {
+    /* Might not exist — ignore */
+    g_clear_error(&error);
+    g_object_unref(root);
+    return;
+  }
+
+  GFileInfo *info;
+
+  while ((info = g_file_enumerator_next_file(enumerator, NULL, &error))) {
+    const char *name = g_file_info_get_name(info);
+
+    GFile *child = g_file_get_child(root, name);
+
+    if (g_file_info_get_file_type(info) == G_FILE_TYPE_DIRECTORY) {
+      char *child_path = g_file_get_path(child);
+      remove_dir_recursive(child_path);
+      g_free(child_path);
+    } else {
+      g_file_delete(child, NULL, NULL);
+    }
+
+    g_object_unref(child);
+    g_object_unref(info);
+  }
+
+  g_object_unref(enumerator);
+
+  /* Now remove the empty directory */
+  g_file_delete(root, NULL, NULL);
+  g_object_unref(root);
 }
 
 void cleanup_environment(PrepareEnvironmentResult *env) {
   if (!env)
     return;
 
-  if (env->isa_dir)
-    g_rmdir(env->isa_dir);
-  if (env->config_dir)
-    g_rmdir(env->config_dir);
-  if (env->plugin_dir)
-    g_rmdir(env->plugin_dir);
+  if (env->root_dir) {
+    remove_dir_recursive(env->root_dir);
+  }
 
   g_free(env->isa_dir);
   g_free(env->config_dir);
@@ -293,4 +344,26 @@ char *yaml_quote(const char *value) {
   }
   g_string_append(out, "'");
   return g_string_free(out, FALSE);
+}
+
+char *write_script_to_temp(const char *contents) {
+  GError *error = NULL;
+  char *name = NULL;
+
+  int fd = g_file_open_tmp("iss-script-XXXXXX.lua", &name, &error);
+  if (fd < 0) {
+    g_error("Failed to create temp file: %s", error->message);
+    g_clear_error(&error);
+    return NULL;
+  }
+  close(fd);
+
+  if (!g_file_set_contents(name, contents, -1, &error)) {
+    g_error("Failed to write script: %s", error->message);
+    g_clear_error(&error);
+    g_free(name);
+    return NULL;
+  }
+
+  return name;
 }

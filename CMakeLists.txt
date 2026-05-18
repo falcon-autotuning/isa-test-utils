@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.20)
 
 project(
   isa-test-utils
-  VERSION 1.0.4
+  VERSION 1.0.5
   DESCRIPTION "Utilities for hermetic ISA/config/plugin test environments"
   HOMEPAGE_URL "https://github.com/falcon-autotuning/isa-test-utils"
   LANGUAGES C
@@ -40,13 +40,17 @@ if(USE_CCACHE)
 endif()
 
 find_package(PkgConfig REQUIRED)
-pkg_check_modules(GLIB2 REQUIRED IMPORTED_TARGET glib-2.0)
+pkg_check_modules(GLIB REQUIRED IMPORTED_TARGET glib-2.0)
+pkg_check_modules(GIO REQUIRED IMPORTED_TARGET gio-2.0)
 add_library(isa-test-utils SHARED
   src/run.c
   src/setup.c
 )
+
 target_link_libraries(isa-test-utils
-  PRIVATE PkgConfig::GLIB2
+  PRIVATE
+    PkgConfig::GLIB
+    PkgConfig::GIO
 )
 include(GenerateExportHeader)
 set(GENERATED_INCLUDE_DIR

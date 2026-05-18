@@ -123,17 +123,6 @@ static void test_instrument_status(void) {
    Measurement
 ================================ */
 
-static void test_perform_measurement(void) {
-  setup_mock();
-
-  char *out = perform_measurement("file.lua", "{}");
-
-  g_assert_nonnull(out);
-  g_assert_true(g_strstr_len(out, -1, "result") != NULL);
-
-  g_free(out);
-}
-
 static void test_perform_measurement_failure(void) {
   setup_mock();
 
@@ -212,7 +201,6 @@ int main(int argc, char **argv) {
   g_test_add_func("/run/instrument/status", test_instrument_status);
 
   /* Measurement */
-  g_test_add_func("/run/measurement/basic", test_perform_measurement);
   g_test_add_func("/run/measurement/failure", test_perform_measurement_failure);
   g_test_add_func("/run/measurement/script", test_measurement_from_script);
 

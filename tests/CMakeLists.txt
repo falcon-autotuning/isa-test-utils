@@ -1,9 +1,4 @@
 cmake_minimum_required(VERSION 3.20)
-
-# Find GLib
-find_package(PkgConfig REQUIRED)
-pkg_check_modules(GLIB2 REQUIRED IMPORTED_TARGET glib-2.0)
-
 # Enable testing
 enable_testing()
 
@@ -17,7 +12,8 @@ add_executable(unit_test_run
 target_link_libraries(unit_test_run
     PRIVATE
         isa-test-utils
-        PkgConfig::GLIB2
+        PkgConfig::GLIB
+        PkgConfig::GIO
 )
 
 add_test(NAME unit_test_run COMMAND unit_test_run)
@@ -32,7 +28,8 @@ add_executable(unit_test_setup
 target_link_libraries(unit_test_setup
     PRIVATE
         isa-test-utils
-        PkgConfig::GLIB2
+        PkgConfig::GLIB
+        PkgConfig::GIO
 )
 
 add_test(NAME unit_test_setup COMMAND unit_test_setup)

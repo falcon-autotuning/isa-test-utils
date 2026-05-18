@@ -46,9 +46,6 @@ ISA_TEST_UTILS_EXPORT void stop_instrument(const char *name);
 
 ISA_TEST_UTILS_EXPORT void stop_server(void);
 
-ISA_TEST_UTILS_EXPORT char *perform_measurement(const char *script_path, // path
-                                                const char *variables_json);
-
 ISA_TEST_UTILS_EXPORT char *
 perform_measurement_from_script(const char *script_contents,
                                 const char *variables_json);
