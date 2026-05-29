@@ -55,7 +55,7 @@ perform_measurement_from_script(const char *script_contents,
 typedef struct {
   char *buffer_id; // heap-allocated string (free with free())
   int element_count;
-  char *data_type; // heap-allocated string (free with free())
+  ArrayType data_type;
   void *data;
 } buffer;
 ISA_TEST_UTILS_EXPORT const buffer *read_buffer(const char *buffer_id);

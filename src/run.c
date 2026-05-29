@@ -1,14 +1,15 @@
 #include "isa-test-utils/run.h"
 #include "utarray.h"
 #include <cjson/cJSON.h>
+#include <instrument-data.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #ifdef _WIN32
-#include <io.h>
 #include <windows.h>
+#include <io.h>
 #define strdup _strdup
 #define close _close
 #define strdup _strdup
@@ -460,6 +461,45 @@ char *perform_measurement_from_script(const char *contents, const char *json) {
 
   return out;
 }
+bool map_string_to_array_type(const char *str, ArrayType *out_type,
+                              size_t *out_size) {
+  if (strcmp(str, "float32") == 0) {
+    *out_type = INST_DATA_FLOAT32;
+    *out_size = sizeof(float);
+    return true;
+  }
+  if (strcmp(str, "float64") == 0) {
+    *out_type = INST_DATA_FLOAT64;
+    *out_size = sizeof(double);
+    return true;
+  }
+  if (strcmp(str, "int32") == 0) {
+    *out_type = INST_DATA_INT32;
+    *out_size = sizeof(int32_t);
+    return true;
+  }
+  if (strcmp(str, "int64") == 0) {
+    *out_type = INST_DATA_INT64;
+    *out_size = sizeof(int64_t);
+    return true;
+  }
+  if (strcmp(str, "uint32") == 0) {
+    *out_type = INST_DATA_UINT32;
+    *out_size = sizeof(uint32_t);
+    return true;
+  }
+  if (strcmp(str, "uint64") == 0) {
+    *out_type = INST_DATA_UINT64;
+    *out_size = sizeof(uint64_t);
+    return true;
+  }
+  if (strcmp(str, "uint8") == 0) {
+    *out_type = INST_DATA_UINT8;
+    *out_size = sizeof(uint8_t);
+    return true;
+  }
+  return false;
+}
 
 ISA_TEST_UTILS_EXPORT const buffer *read_buffer(const char *buffer_id) {
   if (!buffer_id)
@@ -468,8 +508,6 @@ ISA_TEST_UTILS_EXPORT const buffer *read_buffer(const char *buffer_id) {
   UT_array *args;
   utarray_new(args, &ut_str_icd);
 
-  // Note: Your starter code used "release-buffer" with a comment "read buffer".
-  // Ensure "release-buffer" is correct, or swap with your CLI's read command.
   const char *cmd = "read-buffer";
   const char *json_flag = "--json";
 
@@ -496,7 +534,7 @@ ISA_TEST_UTILS_EXPORT const buffer *read_buffer(const char *buffer_id) {
   }
 
   cJSON *json = cJSON_Parse(r.stdout_data);
-  free(r.stdout_data); // Free the raw stdout immediately after parsing
+  free(r.stdout_data);
 
   if (!json) {
     fprintf(stderr, "ERROR: Failed to parse buffer output JSON.\n");
@@ -523,6 +561,16 @@ ISA_TEST_UTILS_EXPORT const buffer *read_buffer(const char *buffer_id) {
     exit(1);
   }
 
+  ArrayType mapped_type;
+  size_t element_size = 0;
+  if (!map_string_to_array_type(type_obj->valuestring, &mapped_type,
+                                &element_size)) {
+    fprintf(stderr, "ERROR: Unsupported buffer array data type string: %s\n",
+            type_obj->valuestring);
+    cJSON_Delete(json);
+    exit(1);
+  }
+
   buffer *buf_res = calloc(1, sizeof(buffer));
   if (!buf_res) {
     cJSON_Delete(json);
@@ -531,68 +579,89 @@ ISA_TEST_UTILS_EXPORT const buffer *read_buffer(const char *buffer_id) {
 
   buf_res->buffer_id = strdup(id_obj->valuestring);
   buf_res->element_count = count_obj->valueint;
-  buf_res->data_type = strdup(type_obj->valuestring);
+  buf_res->data_type =
+      mapped_type; // Maps straight to your new ArrayType enum field
 
-  if (strcmp(buf_res->data_type, "float64") == 0) {
-    double *raw_data = malloc(buf_res->element_count * sizeof(double));
-    if (!raw_data) {
-      cJSON_Delete(json);
-      free(buf_res->buffer_id);
-      free(buf_res->data_type);
-      free(buf_res);
-      return NULL;
-    }
-
-    int i = 0;
-    cJSON *element = NULL;
-    cJSON_ArrayForEach(element, data_array) {
-      if (i < buf_res->element_count && cJSON_IsNumber(element)) {
-        raw_data[i++] = element->valuedouble;
-      }
-    }
-    buf_res->data = (void *)raw_data;
-
-  } else if (strcmp(buf_res->data_type, "float32") == 0) {
-    float *raw_data = malloc(buf_res->element_count * sizeof(float));
-    if (!raw_data) {
-      cJSON_Delete(json);
-      free(buf_res->buffer_id);
-      free(buf_res->data_type);
-      free(buf_res);
-      return NULL;
-    }
-
-    int i = 0;
-    cJSON *element = NULL;
-    cJSON_ArrayForEach(element, data_array) {
-      if (i < buf_res->element_count && cJSON_IsNumber(element)) {
-        raw_data[i++] = (float)element->valuedouble;
-      }
-    }
-    buf_res->data = (void *)raw_data;
-  } else {
-    // Catch fallback types if your binary emits custom configurations (like
-    // int32/int64)
-    fprintf(stderr, "ERROR: Unsupported buffer array data type: %s\n",
-            buf_res->data_type);
+  // Allocate continuous heap memory for the parsed data block array
+  buf_res->data = malloc(buf_res->element_count * element_size);
+  if (!buf_res->data) {
     cJSON_Delete(json);
     free(buf_res->buffer_id);
-    free(buf_res->data_type);
     free(buf_res);
-    exit(1);
+    return NULL;
+  }
+
+  // Iterate over the JSON array elements and parse directly into destination
+  // pointers
+  int i = 0;
+  cJSON *element = NULL;
+  cJSON_ArrayForEach(element, data_array) {
+    if (i >= buf_res->element_count)
+      break;
+    if (!cJSON_IsNumber(element))
+      continue;
+
+    switch (buf_res->data_type) {
+    case INST_DATA_FLOAT32:
+      ((float *)buf_res->data)[i] = (float)element->valuedouble;
+      break;
+    case INST_DATA_FLOAT64:
+      ((double *)buf_res->data)[i] = element->valuedouble;
+      break;
+    case INST_DATA_INT32:
+      ((int32_t *)buf_res->data)[i] = (int32_t)element->valueint;
+      break;
+    case INST_DATA_INT64:
+      ((int64_t *)buf_res->data)[i] = (int64_t)element->valuedouble;
+      break; // valuedouble protects 53-bits safely
+    case INST_DATA_UINT32:
+      ((uint32_t *)buf_res->data)[i] = (uint32_t)element->valuedouble;
+      break;
+    case INST_DATA_UINT64:
+      ((uint64_t *)buf_res->data)[i] = (uint64_t)element->valuedouble;
+      break;
+    case INST_DATA_UINT8:
+      ((uint8_t *)buf_res->data)[i] = (uint8_t)element->valueint;
+      break;
+    }
+    i++;
   }
 
   cJSON_Delete(json);
-
-  return buf_res; // Caller takes ownership and must explicitly clean this
-                  // structure up!
+  return (const buffer *)buf_res;
 }
-void free_buffer(const buffer *buf) {
+
+ISA_TEST_UTILS_EXPORT void free_buffer(const buffer *buf) {
   if (!buf)
     return;
-
   free((void *)buf->buffer_id);
-  free((void *)buf->data_type);
   free((void *)buf->data);
   free((void *)buf);
+}
+
+ISA_TEST_UTILS_EXPORT void release_buffer(const char *buffer_id) {
+  if (!buffer_id)
+    return;
+
+  UT_array *args;
+  utarray_new(args, &ut_str_icd);
+
+  const char *cmd = "release-buffer";
+
+  utarray_push_back(args, &cmd);
+  utarray_push_back(args, &buffer_id);
+
+  ProcessResult r = run_iss(args);
+  utarray_free(args);
+
+  if (r.exit_code != 0) {
+    fprintf(stderr, "ERROR: Remote release-buffer call failed: %s\n",
+            r.stderr_data ? r.stderr_data : "Unknown IPC error");
+    free(r.stdout_data);
+    free(r.stderr_data);
+    exit(1);
+  }
+
+  free(r.stdout_data);
+  free(r.stderr_data);
 }

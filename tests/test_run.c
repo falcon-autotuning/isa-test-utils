@@ -43,8 +43,8 @@ static void test_run_executable_success(void **state) {
   utarray_free(args);
 
   assert_int_equal(r.exit_code, 0);
-  assert_non_null(r.stdout_data);
-  assert_non_null(r.stderr_data);
+  assert_non_null((void *)r.stdout_data);
+  assert_non_null((void *)r.stderr_data);
 
   free(r.stdout_data);
   free(r.stderr_data);
@@ -69,8 +69,8 @@ static void test_run_iss_failure_flag(void **state) {
   utarray_free(args);
 
   assert_int_not_equal(r.exit_code, 0);
-  assert_non_null(r.stdout_data);
-  assert_non_null(r.stderr_data);
+  assert_non_null((void *)r.stdout_data);
+  assert_non_null((void *)r.stderr_data);
 
   free(r.stdout_data);
   free(r.stderr_data);
@@ -146,7 +146,7 @@ static void test_instrument_status(void **state) {
 
   char *out = instrument_status("MyInstrument");
 
-  assert_non_null(out);
+  assert_non_null((void *)out);
   // Replaces g_str_has_prefix using standard strncmp
   assert_int_equal(strncmp(out, "instrument OK", 13), 0);
 
@@ -189,11 +189,43 @@ static void test_measurement_from_script(void **state) {
 
   char *out = perform_measurement_from_script(script, "{}");
 
-  assert_non_null(out);
+  assert_non_null((void *)out);
   // Replaces g_strstr_len with standard strstr lookup
-  assert_non_null(strstr(out, "result"));
+  assert_non_null((void *)strstr(out, "result"));
 
   free(out);
+}
+
+/* ================================
+   Buffer Integration Tests
+================================ */
+
+static void test_read_buffer_success(void **state) {
+  (void)state;
+  setup_mock();
+
+  const char *test_id = "buffer_1779829276760326";
+  const buffer *buf = read_buffer(test_id);
+
+  assert_non_null((void *)buf);
+  assert_string_equal(buf->buffer_id, test_id);
+  assert_int_equal(buf->data_type, INST_DATA_FLOAT64);
+  assert_int_equal(buf->element_count, 3);
+
+  double *measurements = (double *)buf->data;
+  assert_non_null((void *)measurements);
+  assert_float_equal(measurements[0], 1.0, 0.00001);
+  assert_float_equal(measurements[1], 2.5, 0.00001);
+  assert_float_equal(measurements[2], 3.14159, 0.00001);
+
+  free_buffer(buf);
+}
+
+static void test_release_buffer_success(void **state) {
+  (void)state;
+  setup_mock();
+
+  release_buffer("buffer_1779829276760326");
 }
 
 /* ================================
@@ -246,6 +278,10 @@ int main(int argc, char **argv) {
       /* Measurement */
       cmocka_unit_test(test_perform_measurement_failure),
       cmocka_unit_test(test_measurement_from_script),
+
+      /* Buffer Mechanics */
+      cmocka_unit_test(test_read_buffer_success),
+      cmocka_unit_test(test_release_buffer_success),
 
       /* DI */
       cmocka_unit_test(test_dependency_injection),

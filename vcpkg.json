@@ -6,6 +6,7 @@
   "dependencies": [
     "uthash",
     "cmocka",
+    "cjson",
     {
       "name": "instrument-data",
       "version>=": "1.1.4"

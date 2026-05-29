@@ -64,6 +64,37 @@ measure)
   echo "debug: measurement ok" >&2
   exit 0
   ;;
+
+read-buffer)
+  # Check if the caller requested a structured JSON representation
+  is_json=0
+  for arg in "$@"; do
+    if [ "$arg" = "--json" ]; then
+      is_json=1
+    fi
+  done
+
+  if [ "$is_json" = "1" ]; then
+    # Return a fully valid JSON block simulating a float64 buffer of 3 items
+    echo "{"
+    echo "  \"ok\": true,"
+    echo "  \"buffer_id\": \"$2\","
+    echo "  \"element_count\": 3,"
+    echo "  \"data_type\": \"float64\","
+    echo "  \"data\": [1.0, 2.5, 3.14159]"
+    echo "}"
+  else
+    # Fallback to standard human-readable format if evaluated raw
+    echo "Released buffer: $2"
+  fi
+  echo "ERROR: unexpected no json" >&2
+  exit 0
+  ;;
+
+release-buffer)
+  echo "Released buffer: $2" >&2
+  exit 0
+  ;;
 esac
 
 # --------------------------------

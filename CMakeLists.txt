@@ -39,10 +39,8 @@ if(USE_CCACHE)
   endif()
 endif()
 
-find_package(PkgConfig REQUIRED)
-pkg_check_modules(GLIB REQUIRED IMPORTED_TARGET glib-2.0)
-pkg_check_modules(GIO REQUIRED IMPORTED_TARGET gio-2.0)
 find_path(UTHASH_INCLUDE_DIRS "utarray.h")
+find_package(cJSON CONFIG REQUIRED)
 add_library(isa-test-utils SHARED
   src/run.c
   src/setup.c
@@ -50,8 +48,7 @@ add_library(isa-test-utils SHARED
 
 target_link_libraries(isa-test-utils
   PRIVATE
-    PkgConfig::GLIB
-    PkgConfig::GIO
+    cjson
 )
 include(GenerateExportHeader)
 set(GENERATED_INCLUDE_DIR

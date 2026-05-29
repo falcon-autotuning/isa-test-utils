@@ -1,3 +1,0 @@
--std=c99
--I./include
--I./vcpkg_installed/x64-linux-dynamic/include
