@@ -57,14 +57,22 @@ file(CHMOD
 )
 
 # ============================================================
-# Bake simple short names into C macros
+# Force absolute POSIX-style paths (works perfectly on Windows 'sh')
 # ============================================================
+get_filename_component(ABS_MOCK_SERVER_PATH "${CMAKE_BINARY_DIR}/mock-server.sh" ABSOLUTE)
+get_filename_component(ABS_MOCK_EXPANDER_PATH "${CMAKE_BINARY_DIR}/mock-template-expander.sh" ABSOLUTE)
+
+# Force CMake to format the absolute paths with forward slashes (e.g., C:/build/mock-server.sh)
+file(TO_CMAKE_PATH "${ABS_MOCK_SERVER_PATH}" POSIX_MOCK_SERVER_PATH)
+file(TO_CMAKE_PATH "${ABS_MOCK_EXPANDER_PATH}" POSIX_MOCK_EXPANDER_PATH)
+
+# Bake the clean forward-slash strings straight into your C macros
 target_compile_definitions(unit_test_run PRIVATE
-  MOCK_SERVER_PATH="mock-server.sh"
+  MOCK_SERVER_PATH="${POSIX_MOCK_SERVER_PATH}"
 )
 
 target_compile_definitions(unit_test_setup PRIVATE
-  MOCK_EXPANDER_PATH="mock-template-expander.sh"
+  MOCK_EXPANDER_PATH="${POSIX_MOCK_EXPANDER_PATH}"
 )
 
 # ============================================================
