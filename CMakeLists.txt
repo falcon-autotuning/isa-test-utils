@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.20)
 
 project(
   isa-test-utils
-  VERSION 1.1.0
+  VERSION 1.1.1
   DESCRIPTION "Utilities for hermetic ISA/config/plugin test environments"
   HOMEPAGE_URL "https://github.com/falcon-autotuning/isa-test-utils"
   LANGUAGES C
