@@ -31,6 +31,9 @@ target_link_libraries(unit_test_setup
 
 add_test(NAME unit_test_setup COMMAND unit_test_setup)
 
+# =========================================
+# Deploy Mock Scripts
+# =========================================
 configure_file(
   ${CMAKE_SOURCE_DIR}/tests/mock-template-expander.sh
   ${CMAKE_BINARY_DIR}/mock-template-expander.sh
@@ -54,25 +57,36 @@ file(CHMOD
 )
 
 # ============================================================
-# Convert paths to native OS layouts before baking them into C
+# Bake simple short names into C macros
 # ============================================================
-file(TO_NATIVE_PATH "${CMAKE_BINARY_DIR}/mock-server.sh" NATIVE_MOCK_SERVER_PATH)
-file(TO_NATIVE_PATH "${CMAKE_BINARY_DIR}/mock-template-expander.sh" NATIVE_MOCK_EXPANDER_PATH)
-
-# Escape backslashes for the C compiler on Windows
-if (WIN32)
-  string(REPLACE "\\" "\\\\" NATIVE_MOCK_SERVER_PATH "${NATIVE_MOCK_SERVER_PATH}")
-  string(REPLACE "\\" "\\\\" NATIVE_MOCK_EXPANDER_PATH "${NATIVE_MOCK_EXPANDER_PATH}")
-endif()
-
 target_compile_definitions(unit_test_run PRIVATE
-  MOCK_SERVER_PATH="${NATIVE_MOCK_SERVER_PATH}"
+  MOCK_SERVER_PATH="mock-server.sh"
 )
 
 target_compile_definitions(unit_test_setup PRIVATE
-  MOCK_EXPANDER_PATH="${NATIVE_MOCK_EXPANDER_PATH}"
+  MOCK_EXPANDER_PATH="mock-template-expander.sh"
 )
 
+# ============================================================
+# Explicitly Inject Script Directory into CTest Runtime PATH
+# ============================================================
+file(TO_NATIVE_PATH "${CMAKE_BINARY_DIR}" NATIVE_SCRIPT_DIR)
+
+if (WIN32)
+  # Windows uses semicolons (;) for path separation
+  set_tests_properties(unit_test_run unit_test_setup PROPERTIES
+    ENVIRONMENT "PATH=${NATIVE_SCRIPT_DIR};$ENV{PATH}"
+  )
+else()
+  # Linux/macOS uses colons (:) for path separation
+  set_tests_properties(unit_test_run unit_test_setup PROPERTIES
+    ENVIRONMENT "PATH=${NATIVE_SCRIPT_DIR}:$ENV{PATH}"
+  )
+endif()
+
+# ============================================================
+# DLL Copier for Windows
+# ============================================================
 function(copy_runtime_dll target)
   if (WIN32)
     add_custom_command(TARGET ${target} POST_BUILD
@@ -82,7 +96,7 @@ function(copy_runtime_dll target)
     )
     add_custom_command(TARGET ${target} POST_BUILD
       COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        $<TARGET_FILE:cjson>
+        $<TARGET_FILE:cJSON::cJSON> # Using vcpkg target namespace
         $<TARGET_FILE_DIR:${target}>
     )
   endif()
