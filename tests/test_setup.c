@@ -163,7 +163,7 @@ static void test_prepare_isa_tmpl(void **state) {
   UT_array *files;
   utarray_new(files, &embedded_file_icd);
 
-  EmbeddedFile *f = make_file("x.tmpl", "expand me");
+  EmbeddedFile *f = make_file("x.yml.tmpl", "expand me");
   utarray_push_back(files, &f);
 
   PathBuffer *root = path_buf_new(get_system_tmp_dir());
@@ -171,11 +171,11 @@ static void test_prepare_isa_tmpl(void **state) {
   utarray_free(files);
 
   PathBuffer *exp_pb = path_buf_new(dir);
-  path_buf_push(exp_pb, "x");
+  path_buf_push(exp_pb, "x.yml");
   char *expanded = path_buf_free_to_path(exp_pb);
 
   PathBuffer *tmpl_pb = path_buf_new(dir);
-  path_buf_push(tmpl_pb, "x.tmpl");
+  path_buf_push(tmpl_pb, "x.yml.tmpl");
   char *tmpl = path_buf_free_to_path(tmpl_pb);
 
   assert_true(file_exists(expanded));
