@@ -28,12 +28,14 @@ static char *read_all_from_fd(int fd) {
     return strdup("");
 
   char tmp[256];
-  ssize_t bytes;
+
 #ifdef _WIN32
-  while (
-      ReadFile((HANDLE)(intptr_t)fd, tmp, sizeof(tmp), (DWORD *)&bytes, NULL) &&
-      bytes > 0) {
+  DWORD bytes =
+      0; // Windows uses a 32-bit unsigned DWORD for tracking read bytes
+  while (ReadFile((HANDLE)(intptr_t)fd, tmp, sizeof(tmp), &bytes, NULL) &&
+         bytes > 0) {
 #else
+  ssize_t bytes = 0; // POSIX platforms use standard signed ssize_t
   while ((bytes = read(fd, tmp, sizeof(tmp))) > 0) {
 #endif
     if (len + bytes >= capacity) {
