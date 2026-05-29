@@ -16,6 +16,7 @@
 #include <windows.h>
 #include <io.h>
 #define access _access
+#define strdup _strdup
 #define F_OK 0
 #define setenv_cross(name, val) _putenv_s(name, val)
 #define unsetenv_cross(name) _putenv_s(name, "")
