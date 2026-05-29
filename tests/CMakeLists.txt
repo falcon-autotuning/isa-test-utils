@@ -60,3 +60,16 @@ target_compile_definitions(unit_test_run PRIVATE
 target_compile_definitions(unit_test_setup PRIVATE
   MOCK_EXPANDER_PATH="${CMAKE_BINARY_DIR}/mock-template-expander.sh"
 )
+
+function(copy_runtime_dll target)
+  if (WIN32)
+    add_custom_command(TARGET ${target} POST_BUILD
+      COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        $<TARGET_FILE:instrument-data>
+        $<TARGET_FILE_DIR:${target}>
+    )
+  endif()
+endfunction()
+
+copy_runtime_dll(unit_test_run)
+copy_runtime_dll(unit_test_setup)
