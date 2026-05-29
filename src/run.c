@@ -1,5 +1,6 @@
 #include "isa-test-utils/run.h"
 #include "utarray.h"
+#include <cjson/cJSON.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -458,4 +459,140 @@ char *perform_measurement_from_script(const char *contents, const char *json) {
   free(tmp_path);
 
   return out;
+}
+
+ISA_TEST_UTILS_EXPORT const buffer *read_buffer(const char *buffer_id) {
+  if (!buffer_id)
+    return NULL;
+
+  UT_array *args;
+  utarray_new(args, &ut_str_icd);
+
+  // Note: Your starter code used "release-buffer" with a comment "read buffer".
+  // Ensure "release-buffer" is correct, or swap with your CLI's read command.
+  const char *cmd = "read-buffer";
+  const char *json_flag = "--json";
+
+  utarray_push_back(args, &cmd);
+  utarray_push_back(args, &buffer_id);
+  utarray_push_back(args, &json_flag);
+
+  ProcessResult r = run_iss(args);
+  utarray_free(args);
+
+  if (r.exit_code != 0) {
+    fprintf(stderr, "ERROR: Buffer read failed: %s\n",
+            r.stderr_data ? r.stderr_data : "Unknown error");
+    free(r.stdout_data);
+    free(r.stderr_data);
+    exit(1);
+  }
+  free(r.stderr_data);
+
+  if (!r.stdout_data || strlen(r.stdout_data) == 0) {
+    fprintf(stderr, "ERROR: Buffer read returned empty stdout\n");
+    free(r.stdout_data);
+    exit(1);
+  }
+
+  cJSON *json = cJSON_Parse(r.stdout_data);
+  free(r.stdout_data); // Free the raw stdout immediately after parsing
+
+  if (!json) {
+    fprintf(stderr, "ERROR: Failed to parse buffer output JSON.\n");
+    exit(1);
+  }
+
+  cJSON *ok_obj = cJSON_GetObjectItemCaseSensitive(json, "ok");
+  if (!cJSON_IsBool(ok_obj) || !ok_obj->valueint) {
+    fprintf(stderr, "ERROR: Buffer response marked as failed ('ok': false)\n");
+    cJSON_Delete(json);
+    exit(1);
+  }
+
+  cJSON *id_obj = cJSON_GetObjectItemCaseSensitive(json, "buffer_id");
+  cJSON *count_obj = cJSON_GetObjectItemCaseSensitive(json, "element_count");
+  cJSON *type_obj = cJSON_GetObjectItemCaseSensitive(json, "data_type");
+  cJSON *data_array = cJSON_GetObjectItemCaseSensitive(json, "data");
+
+  if (!cJSON_IsString(id_obj) || !cJSON_IsNumber(count_obj) ||
+      !cJSON_IsString(type_obj) || !cJSON_IsArray(data_array)) {
+    fprintf(stderr,
+            "ERROR: JSON fields missing or corrupted in buffer response\n");
+    cJSON_Delete(json);
+    exit(1);
+  }
+
+  buffer *buf_res = calloc(1, sizeof(buffer));
+  if (!buf_res) {
+    cJSON_Delete(json);
+    return NULL;
+  }
+
+  buf_res->buffer_id = strdup(id_obj->valuestring);
+  buf_res->element_count = count_obj->valueint;
+  buf_res->data_type = strdup(type_obj->valuestring);
+
+  if (strcmp(buf_res->data_type, "float64") == 0) {
+    double *raw_data = malloc(buf_res->element_count * sizeof(double));
+    if (!raw_data) {
+      cJSON_Delete(json);
+      free(buf_res->buffer_id);
+      free(buf_res->data_type);
+      free(buf_res);
+      return NULL;
+    }
+
+    int i = 0;
+    cJSON *element = NULL;
+    cJSON_ArrayForEach(element, data_array) {
+      if (i < buf_res->element_count && cJSON_IsNumber(element)) {
+        raw_data[i++] = element->valuedouble;
+      }
+    }
+    buf_res->data = (void *)raw_data;
+
+  } else if (strcmp(buf_res->data_type, "float32") == 0) {
+    float *raw_data = malloc(buf_res->element_count * sizeof(float));
+    if (!raw_data) {
+      cJSON_Delete(json);
+      free(buf_res->buffer_id);
+      free(buf_res->data_type);
+      free(buf_res);
+      return NULL;
+    }
+
+    int i = 0;
+    cJSON *element = NULL;
+    cJSON_ArrayForEach(element, data_array) {
+      if (i < buf_res->element_count && cJSON_IsNumber(element)) {
+        raw_data[i++] = (float)element->valuedouble;
+      }
+    }
+    buf_res->data = (void *)raw_data;
+  } else {
+    // Catch fallback types if your binary emits custom configurations (like
+    // int32/int64)
+    fprintf(stderr, "ERROR: Unsupported buffer array data type: %s\n",
+            buf_res->data_type);
+    cJSON_Delete(json);
+    free(buf_res->buffer_id);
+    free(buf_res->data_type);
+    free(buf_res);
+    exit(1);
+  }
+
+  cJSON_Delete(json);
+
+  return buf_res; // Caller takes ownership and must explicitly clean this
+                  // structure up!
+}
+void free_buffer(const buffer *buf) {
+  if (!buf)
+    return;
+
+  free((void *)buf->buffer_id);
+  free((void *)buf->data_type);
+  free((void *)buf->data);
+  free((void *)buf);
 }
