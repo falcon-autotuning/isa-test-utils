@@ -9,9 +9,11 @@
 #ifdef _WIN32
 #define DIR_SEPARATOR '\\'
 #define DIR_SEPARATOR_STR "\\"
+#define OPPOSITE_SEPARATOR '/'
 #else
 #define DIR_SEPARATOR '/'
 #define DIR_SEPARATOR_STR "/"
+#define OPPOSITE_SEPARATOR '\\'
 #endif
 
 /*

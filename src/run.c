@@ -1,4 +1,5 @@
 #include "isa-test-utils/run.h"
+#include "isa-test-utils/setup.h"
 #include "utarray.h"
 #include <cjson/cJSON.h>
 #include <instrument-data.h>
@@ -58,11 +59,13 @@ static char *read_all_from_fd(int fd) {
 static bool os_spawn_sync(char **argv, char **out_str, char **err_str,
                           int *status) {
 #ifdef _WIN32
-  // Flatten argv array back into a single Windows command line string
-  char cmdline[2048] = {0};
+  // FIXED WINDOWS COMPATIBILITY: Wrap all paths and arguments in double quotes
+  // to protect space boundaries and raw slashes passed to the OS
+  char cmdline[4096] = {0};
   for (int i = 0; argv[i] != NULL; i++) {
+    strcat_s(cmdline, sizeof(cmdline), "\"");
     strcat_s(cmdline, sizeof(cmdline), argv[i]);
-    strcat_s(cmdline, sizeof(cmdline), " ");
+    strcat_s(cmdline, sizeof(cmdline), "\" ");
   }
 
   SECURITY_ATTRIBUTES sa = {sizeof(sa), NULL, TRUE};
@@ -79,6 +82,8 @@ static bool os_spawn_sync(char **argv, char **out_str, char **err_str,
   si.dwFlags |= STARTF_USESTDHANDLES;
   PROCESS_INFORMATION pi = {0};
 
+  // PASSING cmdline as the secondary argument gives CreateProcess a mutable
+  // string block
   if (!CreateProcess(NULL, cmdline, NULL, NULL, TRUE, CREATE_NO_WINDOW, NULL,
                      NULL, &si, &pi)) {
     CloseHandle(out_r);
@@ -193,8 +198,10 @@ ProcessResult run_executable(const char *exe, void *args) {
   UT_array *arr = (UT_array *)args;
   char **argv = utarray_to_strv(arr);
   unsigned int argc = arr ? utarray_len(arr) : 0;
-  char **full = calloc(argc + 2, sizeof(char *));
-  if (!full) {
+
+  // 1. Duplicate string to apply invariant transformations
+  char *normalized_exe = strdup(exe ? exe : "");
+  if (!normalized_exe) {
     free_strv(argv);
     result.exit_code = -1;
     result.stdout_data = strdup("");
@@ -202,11 +209,46 @@ ProcessResult run_executable(const char *exe, void *args) {
     return result;
   }
 
-  full[0] = strdup(exe);
-  for (unsigned int i = 0; i < argc; i++) {
-    full[i + 1] = strdup(argv[i]);
+  // 2. FIXED: Normalize paths dynamically according to target OS rules
+  for (size_t i = 0; normalized_exe[i] != '\0'; i++) {
+    if (normalized_exe[i] == OPPOSITE_SEPARATOR) {
+      normalized_exe[i] = DIR_SEPARATOR;
+    }
   }
-  full[argc + 1] = NULL; // Explicit null termination
+
+  // 3. FIXED: Identify if we need an explicit shell runtime on Windows
+  bool needs_sh_wrapper = false;
+#ifdef _WIN32
+  if (strstr(normalized_exe, ".sh") != NULL) {
+    needs_sh_wrapper = true;
+  }
+#endif
+
+  // 4. Calculate adjusted boundaries
+  unsigned int extra_slots = needs_sh_wrapper ? 2 : 1;
+  char **full = calloc(argc + extra_slots + 1, sizeof(char *));
+  if (!full) {
+    free(normalized_exe);
+    free_strv(argv);
+    result.exit_code = -1;
+    result.stdout_data = strdup("");
+    result.stderr_data = strdup("Memory allocation failed");
+    return result;
+  }
+
+  unsigned int dest_idx = 0;
+#ifdef _WIN32
+  if (needs_sh_wrapper) {
+    full[dest_idx++] =
+        strdup("sh"); // Prepend shell interpreter so Windows can read it
+  }
+#endif
+
+  full[dest_idx++] = normalized_exe; // Already allocated via strdup
+  for (unsigned int i = 0; i < argc; i++) {
+    full[dest_idx++] = strdup(argv[i]);
+  }
+  full[dest_idx] = NULL;
 
   char *out = NULL;
   char *err = NULL;
@@ -227,7 +269,8 @@ ProcessResult run_executable(const char *exe, void *args) {
   }
 
   free_strv(argv);
-  free_strv(full);
+  free_strv(
+      full); // This safely releases normalized_exe since it's stored inside
 
   return result;
 }
