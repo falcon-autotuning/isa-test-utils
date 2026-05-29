@@ -32,41 +32,41 @@ target_link_libraries(unit_test_setup
 add_test(NAME unit_test_setup COMMAND unit_test_setup)
 
 # =========================================
-# Deploy Mock Scripts
+# Deploy Mock Scripts Locally (Next to Test Executables)
 # =========================================
 configure_file(
   ${CMAKE_SOURCE_DIR}/tests/mock-template-expander.sh
-  ${CMAKE_BINARY_DIR}/mock-template-expander.sh
+  ${CMAKE_CURRENT_BINARY_DIR}/mock-template-expander.sh
   COPYONLY
 )
 
 configure_file(
   ${CMAKE_SOURCE_DIR}/tests/mock-server.sh
-  ${CMAKE_BINARY_DIR}/mock-server.sh
+  ${CMAKE_CURRENT_BINARY_DIR}/mock-server.sh
   COPYONLY
 )
 
 file(CHMOD
-  ${CMAKE_BINARY_DIR}/mock-template-expander.sh
+  ${CMAKE_CURRENT_BINARY_DIR}/mock-template-expander.sh
   PERMISSIONS OWNER_EXECUTE OWNER_WRITE OWNER_READ GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE
 )
 
 file(CHMOD
-  ${CMAKE_BINARY_DIR}/mock-server.sh
+  ${CMAKE_CURRENT_BINARY_DIR}/mock-server.sh
   PERMISSIONS OWNER_EXECUTE OWNER_WRITE OWNER_READ GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE
 )
 
 # ============================================================
-# Force absolute POSIX-style paths (works perfectly on Windows 'sh')
+# Force strict absolute paths including full drive letter roots
 # ============================================================
-get_filename_component(ABS_MOCK_SERVER_PATH "${CMAKE_BINARY_DIR}/mock-server.sh" ABSOLUTE)
-get_filename_component(ABS_MOCK_EXPANDER_PATH "${CMAKE_BINARY_DIR}/mock-template-expander.sh" ABSOLUTE)
+get_filename_component(ABS_MOCK_SERVER_PATH "${CMAKE_CURRENT_BINARY_DIR}/mock-server.sh" ABSOLUTE)
+get_filename_component(ABS_MOCK_EXPANDER_PATH "${CMAKE_CURRENT_BINARY_DIR}/mock-template-expander.sh" ABSOLUTE)
 
-# Force CMake to format the absolute paths with forward slashes (e.g., C:/build/mock-server.sh)
+# Force CMake to format the absolute paths with forward slashes (e.g., C:/path/to/mock-server.sh)
 file(TO_CMAKE_PATH "${ABS_MOCK_SERVER_PATH}" POSIX_MOCK_SERVER_PATH)
 file(TO_CMAKE_PATH "${ABS_MOCK_EXPANDER_PATH}" POSIX_MOCK_EXPANDER_PATH)
 
-# Bake the clean forward-slash strings straight into your C macros
+# Bake the clean absolute forward-slash strings straight into your C macros
 target_compile_definitions(unit_test_run PRIVATE
   MOCK_SERVER_PATH="${POSIX_MOCK_SERVER_PATH}"
 )
@@ -75,25 +75,13 @@ target_compile_definitions(unit_test_setup PRIVATE
   MOCK_EXPANDER_PATH="${POSIX_MOCK_EXPANDER_PATH}"
 )
 
-# ============================================================
-# Explicitly Inject Script Directory into CTest Runtime PATH
-# ============================================================
-file(TO_NATIVE_PATH "${CMAKE_BINARY_DIR}" NATIVE_SCRIPT_DIR)
-
-if (WIN32)
-  # Windows uses semicolons (;) for path separation
-  set_tests_properties(unit_test_run unit_test_setup PROPERTIES
-    ENVIRONMENT "PATH=${NATIVE_SCRIPT_DIR};$ENV{PATH}"
-  )
-else()
-  # Linux/macOS uses colons (:) for path separation
-  set_tests_properties(unit_test_run unit_test_setup PROPERTIES
-    ENVIRONMENT "PATH=${NATIVE_SCRIPT_DIR}:$ENV{PATH}"
-  )
-endif()
+# Force the working directory of the test runner to be the target folder
+set_tests_properties(unit_test_run unit_test_setup PROPERTIES
+  WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
 
 # ============================================================
-# DLL Copier for Windows
+# DLL Copier for Windows (Using correct vcpkg package target names)
 # ============================================================
 function(copy_runtime_dll target)
   if (WIN32)
