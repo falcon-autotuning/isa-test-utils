@@ -13,11 +13,13 @@
 
 // Cross-platform environment and file access configurations
 #ifdef _WIN32
+#include <windows.h>
 #include <io.h>
 #define access _access
 #define F_OK 0
 #define setenv_cross(name, val) _putenv_s(name, val)
 #define unsetenv_cross(name) _putenv_s(name, "")
+
 #else
 #include <unistd.h>
 #define setenv_cross(name, val) setenv(name, val, 1)
