@@ -68,6 +68,11 @@ function(copy_runtime_dll target)
         $<TARGET_FILE:isa-test-utils>
         $<TARGET_FILE_DIR:${target}>
     )
+    add_custom_command(TARGET ${target} POST_BUILD
+      COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        $<TARGET_FILE:cjson>
+        $<TARGET_FILE_DIR:${target}>
+    )
   endif()
 endfunction()
 
