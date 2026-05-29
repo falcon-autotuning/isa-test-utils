@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.20)
 
 project(
   isa-test-utils
-  VERSION 1.0.5
+  VERSION 1.1.0
   DESCRIPTION "Utilities for hermetic ISA/config/plugin test environments"
   HOMEPAGE_URL "https://github.com/falcon-autotuning/isa-test-utils"
   LANGUAGES C
@@ -42,6 +42,7 @@ endif()
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(GLIB REQUIRED IMPORTED_TARGET glib-2.0)
 pkg_check_modules(GIO REQUIRED IMPORTED_TARGET gio-2.0)
+find_path(UTHASH_INCLUDE_DIRS "utarray.h")
 add_library(isa-test-utils SHARED
   src/run.c
   src/setup.c
@@ -60,10 +61,13 @@ generate_export_header(isa-test-utils
   EXPORT_FILE_NAME
     ${GENERATED_INCLUDE_DIR}/isa-test-utils-export.h
 )
-target_include_directories(isa-test-utils PUBLIC
-  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-  $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/include>
-  $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
+target_include_directories(isa-test-utils
+  PRIVATE
+    ${UTHASH_INCLUDE_DIRS}
+  PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/include>
+    $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
 )
 
 if(BUILD_TESTS)

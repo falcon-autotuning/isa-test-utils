@@ -43,7 +43,6 @@ This function:
 Requirements:
 
 - CMake ≥ 3.20
-- GLib (glib-2.0)
 - C compiler (gcc/clang/MSVC)
 
 Build:
@@ -114,10 +113,11 @@ isa_test_utils_embed_bundle(
 
 ## 🧪 Writing Tests
 
-### Include bundle
+### Include bundle and data structures
 
 ```c
 #include "embedded_bundle.h"
+#include "utarray.h" // For handling argument and replacement lists
 ```
 
 ### Build bundle
@@ -128,21 +128,35 @@ EmbeddedBundle bundle = get_embedded_bundle();
 
 ### Define replacements (for `.in` files)
 
+Initialize a `UT_array` using the pair-string control descriptor to pass dynamic replacement options safely:
+
 ```c
-GPtrArray *replacements = g_ptr_array_new();
+// Define the custom pair tracking metadata descriptor
+static void free_pair_string_cb(void *elt) {
+  PairString *p = *(PairString **)elt;
+  if (!p) return;
+  free(p->first);
+  free(p->second);
+  free(p);
+}
+static const UT_icd pair_string_icd = {sizeof(PairString *), NULL, NULL, free_pair_string_cb};
 
-PairString *p = g_new0(PairString, 1);
-p->first = g_strdup("__NAME__");
-p->second = g_strdup("MyInstrument");
+// Instantiate the replacements container
+UT_array *replacements;
+utarray_new(replacements, &pair_string_icd);
 
-g_ptr_array_add(replacements, p);
+PairString *p = calloc(1, sizeof(PairString));
+p->first = strdup("__NAME__");
+p->second = strdup("MyInstrument");
+
+utarray_push_back(replacements, &p);
 ```
 
 ### Prepare environment
 
 ```c
 PrepareEnvironmentResult env =
-    prepare_full_environment_bundle(&bundle, replacements);
+    prepare_full_environment_bundle(&bundle, (void *)replacements);
 ```
 
 ### Run your tests
@@ -155,6 +169,7 @@ start_server();
 
 ```c
 cleanup_environment(&env);
+utarray_free(replacements); // Free the container after cleanup
 ```
 
 ---------------------------------------------------------------------
@@ -208,7 +223,7 @@ Plugins are optional.
 The system creates a temporary directory:
 
 ```
-/tmp/test_env/
+[System Temp]/test_env/
     isa/
     config/
     plugins/
@@ -221,6 +236,7 @@ The system creates a temporary directory:
 - The library cannot discover files automatically
 - Everything must be embedded via CMake
 - Templates must use `.in` extension for replacement
+- All allocations transfer to standard `free()` structures instead of custom library macros
 
 Example:
 
@@ -254,4 +270,4 @@ Focus areas:
 
 ## 📄 License
 
-LGPLv3.0
+MPLv2.0

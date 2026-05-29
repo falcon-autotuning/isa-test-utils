@@ -1,23 +1,97 @@
-#include "isa-test-utils/setup.h"
-#include <glib.h>
-#include <glib/gstdio.h>
+#include <stdarg.h>
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
-/* =========================
-   Helpers
-========================= */
+#include <cmocka.h>
+
+#include "isa-test-utils/setup.h"
+#include "utarray.h"
+
+// Cross-platform environment and file access configurations
+#ifdef _WIN32
+#include <io.h>
+#define access _access
+#define F_OK 0
+#define setenv_cross(name, val) _putenv_s(name, val)
+#define unsetenv_cross(name) _putenv_s(name, "")
+#else
+#include <unistd.h>
+#define setenv_cross(name, val) setenv(name, val, 1)
+#define unsetenv_cross(name) unsetenv(name)
+#endif
+
+/* =========================================================================
+   Cross-Platform Core Testing Helpers
+   ========================================================================= */
+
+static const char *get_system_tmp_dir(void) {
+#ifdef _WIN32
+  static char win_tmp[MAX_PATH];
+  if (GetTempPathA(MAX_PATH, win_tmp) != 0)
+    return win_tmp;
+  return "C:\\Temp";
+#else
+  const char *tmp = getenv("TMPDIR");
+  if (!tmp)
+    tmp = getenv("TMP");
+  if (!tmp)
+    tmp = getenv("TEMP");
+  if (!tmp)
+    tmp = "/tmp";
+  return tmp;
+#endif
+}
+
+static bool file_exists(const char *path) {
+  if (!path)
+    return false;
+  return access(path, F_OK) == 0;
+}
+
+static char *read_entire_file(const char *path, size_t *out_len) {
+  FILE *f = fopen(path, "rb");
+  if (!f)
+    return NULL;
+
+  fseek(f, 0, SEEK_END);
+  long size = ftell(f);
+  fseek(f, 0, SEEK_SET);
+
+  char *contents = malloc(size + 1);
+  if (contents) {
+    size_t read_bytes = fread(contents, 1, size, f);
+    contents[read_bytes] = '\0';
+    if (out_len)
+      *out_len = read_bytes;
+  }
+  fclose(f);
+  return contents;
+}
+
+/* =========================================================================
+   Struct Builders & Destructors
+   ========================================================================= */
 
 static PairString *pair(const char *k, const char *v) {
-  PairString *p = g_new0(PairString, 1);
-  p->first = g_strdup(k);
-  p->second = g_strdup(v);
+  PairString *p = calloc(1, sizeof(PairString));
+  if (p) {
+    p->first = strdup(k);
+    p->second = strdup(v);
+  }
   return p;
 }
 
 static EmbeddedFile *make_file(const char *path, const char *data) {
-  EmbeddedFile *f = g_new0(EmbeddedFile, 1);
-  f->relative_path = path;
-  f->data = (const unsigned char *)g_strdup(data);
-  f->size = strlen(data);
+  EmbeddedFile *f = calloc(1, sizeof(EmbeddedFile));
+  if (f) {
+    f->relative_path = path;
+    f->data = (const unsigned char *)strdup(data);
+    f->size = strlen(data);
+  }
   return f;
 }
 
@@ -26,204 +100,247 @@ static void setup_expander(void) {
       &(SetupConfig){.template_expander_path = MOCK_EXPANDER_PATH});
 }
 
-static void free_embedded_file(gpointer ptr) {
-  EmbeddedFile *f = ptr;
-
+// Custom ICD hooks enabling UT_array to cleanly manage embedded structure
+// pointers
+static void free_embedded_file_cb(void *elt) {
+  EmbeddedFile *f = *(EmbeddedFile **)elt;
   if (!f)
     return;
-
-  g_free((void *)f->data); // free strdup data
-  /* NOTE: relative_path is NOT owned (string literal) */
-
-  g_free(f);
+  free((void *)f->data);
+  free(f);
 }
 
-/* =========================
-   ISA tests
-========================= */
+static void free_pair_string_cb(void *elt) {
+  PairString *p = *(PairString **)elt;
+  if (!p)
+    return;
+  free(p->first);
+  free(p->second);
+  free(p);
+}
 
-static void test_prepare_isa_basic(void) {
+static const UT_icd embedded_file_icd = {sizeof(EmbeddedFile *), NULL, NULL,
+                                         free_embedded_file_cb};
+static const UT_icd pair_string_icd = {sizeof(PairString *), NULL, NULL,
+                                       free_pair_string_cb};
+
+/* =========================================================================
+   ISA Tests
+   ========================================================================= */
+
+static void test_prepare_isa_basic(void **state) {
+  (void)state;
   setup_expander();
 
-  GPtrArray *files = g_ptr_array_new_with_free_func(free_embedded_file);
+  UT_array *files;
+  utarray_new(files, &embedded_file_icd);
 
-  g_ptr_array_add(files, make_file("a.txt", "hello"));
-  g_auto(GPathBuf) root;
-  g_path_buf_init_from_path(&root, g_get_tmp_dir());
+  EmbeddedFile *f = make_file("a.txt", "hello");
+  utarray_push_back(files, &f);
 
-  char *dir = prepare_isa_directory(files, &root);
+  PathBuffer *root = path_buf_new(get_system_tmp_dir());
+  char *dir = prepare_isa_directory(files, root);
+  utarray_free(files);
 
-  char *out = g_build_filename(dir, "a.txt", NULL);
+  PathBuffer *out_pb = path_buf_new(dir);
+  path_buf_push(out_pb, "a.txt");
+  char *out = path_buf_free_to_path(out_pb);
 
-  g_assert_true(g_file_test(out, G_FILE_TEST_EXISTS));
+  assert_true(file_exists(out));
 
-  g_free(out);
-  g_free(dir);
+  free(out);
+  free(dir);
+  free(root->path_str);
+  free(root);
 }
 
-static void test_prepare_isa_tmpl(void) {
+static void test_prepare_isa_tmpl(void **state) {
+  (void)state;
   setup_expander();
 
-  GPtrArray *files = g_ptr_array_new_with_free_func(free_embedded_file);
+  UT_array *files;
+  utarray_new(files, &embedded_file_icd);
 
-  g_ptr_array_add(files, make_file("x.tmpl", "expand me"));
-  g_auto(GPathBuf) root;
-  g_path_buf_init_from_path(&root, g_get_tmp_dir());
+  EmbeddedFile *f = make_file("x.tmpl", "expand me");
+  utarray_push_back(files, &f);
 
-  char *dir = prepare_isa_directory(files, &root);
+  PathBuffer *root = path_buf_new(get_system_tmp_dir());
+  char *dir = prepare_isa_directory(files, root);
+  utarray_free(files);
 
-  char *expanded = g_build_filename(dir, "x", NULL);
-  char *tmpl = g_build_filename(dir, "x.tmpl", NULL);
+  PathBuffer *exp_pb = path_buf_new(dir);
+  path_buf_push(exp_pb, "x");
+  char *expanded = path_buf_free_to_path(exp_pb);
 
-  g_assert_true(g_file_test(expanded, G_FILE_TEST_EXISTS));
-  g_assert_false(g_file_test(tmpl, G_FILE_TEST_EXISTS));
+  PathBuffer *tmpl_pb = path_buf_new(dir);
+  path_buf_push(tmpl_pb, "x.tmpl");
+  char *tmpl = path_buf_free_to_path(tmpl_pb);
 
-  g_free(expanded);
-  g_free(tmpl);
-  g_free(dir);
+  assert_true(file_exists(expanded));
+  assert_false(file_exists(tmpl));
+
+  free(expanded);
+  free(tmpl);
+  free(dir);
+  free(root->path_str);
+  free(root);
 }
 
-/* =========================
-   Config tests
-========================= */
+/* =========================================================================
+   Config Tests
+   ========================================================================= */
 
-static void test_config_replace(void) {
-  GPtrArray *files = g_ptr_array_new_with_free_func(free_embedded_file);
-  GPtrArray *replacements = g_ptr_array_new_with_free_func(free_embedded_file);
+static void test_config_replace(void **state) {
+  (void)state;
+  UT_array *files;
+  UT_array *replacements;
+  utarray_new(files, &embedded_file_icd);
+  utarray_new(replacements, &pair_string_icd);
 
-  g_ptr_array_add(files, make_file("cfg.yml.in", "hello __NAME__"));
+  EmbeddedFile *f = make_file("cfg.yml.in", "hello __NAME__");
+  utarray_push_back(files, &f);
 
-  g_ptr_array_add(replacements, pair("__NAME__", "world"));
-  g_auto(GPathBuf) root;
-  g_path_buf_init_from_path(&root, g_get_tmp_dir());
+  PairString *p = pair("__NAME__", "world");
+  utarray_push_back(replacements, &p);
 
-  char *dir = prepare_config_directory(files, &root, replacements);
+  PathBuffer *root = path_buf_new(get_system_tmp_dir());
+  char *dir = prepare_config_directory(files, root, replacements);
+  utarray_free(files);
+  utarray_free(replacements);
 
-  char *out = g_build_filename(dir, "cfg.yml", NULL);
+  PathBuffer *out_pb = path_buf_new(dir);
+  path_buf_push(out_pb, "cfg.yml");
+  char *out = path_buf_free_to_path(out_pb);
 
-  gchar *contents;
-  g_file_get_contents(out, &contents, NULL, NULL);
+  char *contents = read_entire_file(out, NULL);
+  assert_non_null(contents);
+  assert_string_equal(contents, "hello world");
 
-  g_assert_cmpstr(contents, ==, "hello world");
-
-  g_free(contents);
-  g_free(out);
-  g_free(dir);
+  free(contents);
+  free(out);
+  free(dir);
+  free(root->path_str);
+  free(root);
 }
 
-/* =========================
-   Plugin tests
-========================= */
+/* =========================================================================
+   Plugin Tests
+   ========================================================================= */
 
-static void test_plugin_extract(void) {
-  GPtrArray *files = g_ptr_array_new_with_free_func(free_embedded_file);
+static void test_plugin_extract(void **state) {
+  (void)state;
+  UT_array *files;
+  utarray_new(files, &embedded_file_icd);
 
-  g_ptr_array_add(files, make_file("plugin.so", "binary"));
-  g_auto(GPathBuf) root;
-  g_path_buf_init_from_path(&root, g_get_tmp_dir());
+  EmbeddedFile *f = make_file("plugin.so", "binary");
+  utarray_push_back(files, &f);
 
-  char *dir = prepare_plugin_directory(files, &root);
+  PathBuffer *root = path_buf_new(get_system_tmp_dir());
+  char *dir = prepare_plugin_directory(files, root);
+  utarray_free(files);
 
-  char *out = g_build_filename(dir, "plugin.so", NULL);
+  PathBuffer *out_pb = path_buf_new(dir);
+  path_buf_push(out_pb, "plugin.so");
+  char *out = path_buf_free_to_path(out_pb);
 
-  g_assert_true(g_file_test(out, G_FILE_TEST_EXISTS));
+  assert_true(file_exists(out));
 
-  g_free(out);
-  g_free(dir);
+  free(out);
+  free(dir);
+  free(root->path_str);
+  free(root);
 }
 
-/* =========================
-   Env + utils
-========================= */
+/* =========================================================================
+   Env + Utils
+   ========================================================================= */
 
-static void test_env_string(void) {
-  g_setenv("X", "abc", TRUE);
+static void test_env_string(void **state) {
+  (void)state;
+  setenv_cross("X", "abc");
 
   char *v = get_required_env_string("X");
-  g_assert_cmpstr(v, ==, "abc");
+  assert_string_equal(v, "abc");
 
-  g_free(v);
+  unsetenv_cross("X");
+  free(v);
 }
 
-static void test_env_int(void) {
-  g_setenv("Y", "123", TRUE);
+static void test_env_int(void **state) {
+  (void)state;
+  setenv_cross("Y", "123");
 
   int v = get_required_env_int("Y");
-  g_assert_cmpint(v, ==, 123);
+  assert_int_equal(v, 123);
+
+  unsetenv_cross("Y");
 }
 
-static void test_yaml_quote(void) {
+static void test_yaml_quote(void **state) {
+  (void)state;
   char *q = yaml_quote("a'b");
-
-  g_assert_cmpstr(q, ==, "'a''b'");
-
-  g_free(q);
+  assert_string_equal(q, "'a''b'");
+  free(q);
 }
 
-/* =========================
-   Script writing tests
-========================= */
+/* =========================================================================
+   Script Writing Tests
+   ========================================================================= */
 
-static void test_write_script_basic(void) {
+static void test_write_script_basic(void **state) {
+  (void)state;
   const char *script = "print('hello')";
 
   char *path = write_script_to_temp(script);
 
-  g_assert_nonnull(path);
-  g_assert_true(g_file_test(path, G_FILE_TEST_EXISTS));
+  assert_non_null((void *)path);
+  assert_true(file_exists(path));
 
-  gchar *contents = NULL;
-  g_file_get_contents(path, &contents, NULL, NULL);
+  char *contents = read_entire_file(path, NULL);
+  assert_non_null(contents);
+  assert_string_equal(contents, script);
 
-  g_assert_cmpstr(contents, ==, script);
-
-  g_free(contents);
-  g_remove(path);
-  g_free(path);
+  free(contents);
+  remove(path);
+  free(path);
 }
 
-/* -------------------------
-   Empty contents
-------------------------- */
-
-static void test_write_script_empty_contents(void) {
+static void test_write_script_empty_contents(void **state) {
+  (void)state;
   char *path = write_script_to_temp("");
 
-  g_assert_nonnull(path);
-  g_assert_true(g_file_test(path, G_FILE_TEST_EXISTS));
+  assert_non_null((void *)path);
+  assert_true(file_exists(path));
 
-  gchar *contents = NULL;
-  gsize len = 0;
+  size_t len = 0;
+  char *contents = read_entire_file(path, &len);
+  assert_non_null(contents);
+  assert_int_equal(len, 0);
 
-  g_file_get_contents(path, &contents, &len, NULL);
-
-  g_assert_cmpint(len, ==, 0);
-
-  g_free(contents);
-  g_remove(path);
-  g_free(path);
+  free(contents);
+  remove(path);
+  free(path);
 }
 
-/* =========================
-   main
-========================= */
+/* =========================================================================
+   Execution Suite Registration Matrix
+   ========================================================================= */
 
 int main(int argc, char **argv) {
-  g_test_init(&argc, &argv, NULL);
+  (void)argc;
+  (void)argv;
 
-  g_test_add_func("/setup/isa/basic", test_prepare_isa_basic);
-  g_test_add_func("/setup/isa/tmpl", test_prepare_isa_tmpl);
+  const struct CMUnitTest tests[] = {
+      cmocka_unit_test(test_prepare_isa_basic),
+      cmocka_unit_test(test_prepare_isa_tmpl),
+      cmocka_unit_test(test_config_replace),
+      cmocka_unit_test(test_plugin_extract),
+      cmocka_unit_test(test_env_string),
+      cmocka_unit_test(test_env_int),
+      cmocka_unit_test(test_yaml_quote),
+      cmocka_unit_test(test_write_script_basic),
+      cmocka_unit_test(test_write_script_empty_contents),
+  };
 
-  g_test_add_func("/setup/config/replace", test_config_replace);
-
-  g_test_add_func("/setup/plugin/extract", test_plugin_extract);
-
-  g_test_add_func("/setup/env/string", test_env_string);
-  g_test_add_func("/setup/env/int", test_env_int);
-  g_test_add_func("/setup/yaml", test_yaml_quote);
-  g_test_add_func("/setup/script/basic", test_write_script_basic);
-  g_test_add_func("/setup/script/empty_contents",
-                  test_write_script_empty_contents);
-
-  return g_test_run();
+  return cmocka_run_group_tests(tests, NULL, NULL);
 }

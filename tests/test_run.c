@@ -1,5 +1,21 @@
+#include <cmocka.h>
+#include <stdarg.h>
+#include <stddef.h>
+#include <stdint.h>
+#include <stdlib.h>
+#include <string.h>
+
 #include "isa-test-utils/run.h"
-#include <glib.h>
+#include "utarray.h"
+
+// Define cross-platform environment variable utility macros
+#ifdef _WIN32
+#define setenv_cross(name, val) _putenv_s(name, val)
+#define unsetenv_cross(name) _putenv_s(name, "")
+#else
+#define setenv_cross(name, val) setenv(name, val, 1)
+#define unsetenv_cross(name) unsetenv(name)
+#endif
 
 /* ================================
    Setup
@@ -10,77 +26,90 @@ static void setup_mock(void) {
 }
 
 /* ================================
-   run_executable
+   run_executable / run_iss
 ================================ */
 
-static void test_run_executable_success(void) {
+static void test_run_executable_success(void **state) {
+  (void)state;
   setup_mock();
 
-  GPtrArray *args = g_ptr_array_new();
-  g_ptr_array_add(args, "measure");
+  UT_array *args;
+  utarray_new(args, &ut_str_icd);
+  const char *arg1 = "measure";
+  utarray_push_back(args, &arg1);
 
+  // void *args casts seamlessly matching your public API configuration
   ProcessResult r = run_iss(args);
+  utarray_free(args);
 
-  g_assert_cmpint(r.exit_code, ==, 0);
-  g_assert_nonnull(r.stdout_data);
-  g_assert_nonnull(r.stderr_data);
+  assert_int_equal(r.exit_code, 0);
+  assert_non_null(r.stdout_data);
+  assert_non_null(r.stderr_data);
 
-  g_free(r.stdout_data);
-  g_free(r.stderr_data);
-  g_ptr_array_free(args, TRUE);
+  free(r.stdout_data);
+  free(r.stderr_data);
 }
 
 /* ================================
-   failure path
+   Failure path
 ================================ */
 
-static void test_run_iss_failure_flag(void) {
+static void test_run_iss_failure_flag(void **state) {
+  (void)state;
   setup_mock();
 
-  GPtrArray *args = g_ptr_array_new();
-  g_ptr_array_add(args, "measure");
-  g_ptr_array_add(args, "--fail");
+  UT_array *args;
+  utarray_new(args, &ut_str_icd);
+  const char *arg1 = "measure";
+  const char *arg2 = "--fail";
+  utarray_push_back(args, &arg1);
+  utarray_push_back(args, &arg2);
 
   ProcessResult r = run_iss(args);
+  utarray_free(args);
 
-  g_assert_cmpint(r.exit_code, !=, 0);
-  g_assert_nonnull(r.stdout_data);
-  g_assert_nonnull(r.stderr_data);
+  assert_int_not_equal(r.exit_code, 0);
+  assert_non_null(r.stdout_data);
+  assert_non_null(r.stderr_data);
 
-  g_free(r.stdout_data);
-  g_free(r.stderr_data);
-  g_ptr_array_free(args, TRUE);
+  free(r.stdout_data);
+  free(r.stderr_data);
 }
 
-static void test_run_iss_failure_env(void) {
+static void test_run_iss_failure_env(void **state) {
+  (void)state;
   setup_mock();
 
-  g_setenv("MOCK_FAIL_ALL", "1", TRUE);
+  setenv_cross("MOCK_FAIL_ALL", "1");
 
-  GPtrArray *args = g_ptr_array_new();
-  g_ptr_array_add(args, "measure");
+  UT_array *args;
+  utarray_new(args, &ut_str_icd);
+  const char *arg1 = "measure";
+  utarray_push_back(args, &arg1);
 
   ProcessResult r = run_iss(args);
+  utarray_free(args);
 
-  g_assert_cmpint(r.exit_code, !=, 0);
+  assert_int_not_equal(r.exit_code, 0);
 
-  g_unsetenv("MOCK_FAIL_ALL");
+  unsetenv_cross("MOCK_FAIL_ALL");
 
-  g_free(r.stdout_data);
-  g_free(r.stderr_data);
-  g_ptr_array_free(args, TRUE);
+  free(r.stdout_data);
+  free(r.stderr_data);
 }
 
 /* ================================
    Server lifecycle
 ================================ */
 
-static void test_start_server(void) {
+static void test_start_server(void **state) {
+  (void)state;
   setup_mock();
   start_server(); // should succeed
 }
 
-static void test_stop_server(void) {
+static void test_stop_server(void **state) {
+  (void)state;
   setup_mock();
   stop_server(); // should succeed
 }
@@ -89,17 +118,20 @@ static void test_stop_server(void) {
    Instrument lifecycle
 ================================ */
 
-static void test_start_instrument_no_plugin(void) {
+static void test_start_instrument_no_plugin(void **state) {
+  (void)state;
   setup_mock();
   start_instrument("config.yml", NULL);
 }
 
-static void test_start_instrument_with_plugin(void) {
+static void test_start_instrument_with_plugin(void **state) {
+  (void)state;
   setup_mock();
   start_instrument("config.yml", "plugin.so");
 }
 
-static void test_stop_instrument(void) {
+static void test_stop_instrument(void **state) {
+  (void)state;
   setup_mock();
   stop_instrument("MyInstrument");
 }
@@ -108,104 +140,116 @@ static void test_stop_instrument(void) {
    Instrument status
 ================================ */
 
-static void test_instrument_status(void) {
+static void test_instrument_status(void **state) {
+  (void)state;
   setup_mock();
 
   char *out = instrument_status("MyInstrument");
 
-  g_assert_nonnull(out);
-  g_assert_true(g_str_has_prefix(out, "instrument OK"));
+  assert_non_null(out);
+  // Replaces g_str_has_prefix using standard strncmp
+  assert_int_equal(strncmp(out, "instrument OK", 13), 0);
 
-  g_free(out);
+  free(out);
 }
 
 /* ================================
    Measurement
 ================================ */
 
-static void test_perform_measurement_failure(void) {
+static void test_perform_measurement_failure(void **state) {
+  (void)state;
   setup_mock();
 
-  GPtrArray *args = g_ptr_array_new();
-  g_ptr_array_add(args, "measure");
-  g_ptr_array_add(args, "--fail");
+  UT_array *args;
+  utarray_new(args, &ut_str_icd);
+  const char *arg1 = "measure";
+  const char *arg2 = "--fail";
+  utarray_push_back(args, &arg1);
+  utarray_push_back(args, &arg2);
 
   ProcessResult r = run_iss(args);
+  utarray_free(args);
 
-  g_assert_cmpint(r.exit_code, !=, 0);
+  assert_int_not_equal(r.exit_code, 0);
 
-  g_free(r.stdout_data);
-  g_free(r.stderr_data);
-  g_ptr_array_free(args, TRUE);
+  free(r.stdout_data);
+  free(r.stderr_data);
 }
 
 /* ================================
    Script-based measurement
 ================================ */
 
-static void test_measurement_from_script(void) {
+static void test_measurement_from_script(void **state) {
+  (void)state;
   setup_mock();
 
   const char *script = "function main(ctx) ctx:log('hello') end";
 
   char *out = perform_measurement_from_script(script, "{}");
 
-  g_assert_nonnull(out);
-  g_assert_true(g_strstr_len(out, -1, "result") != NULL);
+  assert_non_null(out);
+  // Replaces g_strstr_len with standard strstr lookup
+  assert_non_null(strstr(out, "result"));
 
-  g_free(out);
+  free(out);
 }
 
 /* ================================
    Dependency injection sanity
 ================================ */
 
-static void test_dependency_injection(void) {
+static void test_dependency_injection(void **state) {
+  (void)state;
   RunConfig cfg = {.instrument_server_path = MOCK_SERVER_PATH};
   run_set_config(&cfg);
 
-  GPtrArray *args = g_ptr_array_new();
-  g_ptr_array_add(args, "measure");
+  UT_array *args;
+  utarray_new(args, &ut_str_icd);
+  const char *arg1 = "measure";
+  utarray_push_back(args, &arg1);
 
   ProcessResult r = run_iss(args);
+  utarray_free(args);
 
-  g_assert_cmpint(r.exit_code, ==, 0);
+  assert_int_equal(r.exit_code, 0);
 
-  g_free(r.stdout_data);
-  g_free(r.stderr_data);
-  g_ptr_array_free(args, TRUE);
+  free(r.stdout_data);
+  free(r.stderr_data);
 }
 
 /* ================================
-   Main
+   Main Engine Integration
 ================================ */
 
 int main(int argc, char **argv) {
-  g_test_init(&argc, &argv, NULL);
+  (void)argc;
+  (void)argv;
 
-  /* Core execution */
-  g_test_add_func("/run/exec_success", test_run_executable_success);
-  g_test_add_func("/run/fail_flag", test_run_iss_failure_flag);
-  g_test_add_func("/run/fail_env", test_run_iss_failure_env);
+  const struct CMUnitTest tests[] = {
+      /* Core execution */
+      cmocka_unit_test(test_run_executable_success),
+      cmocka_unit_test(test_run_iss_failure_flag),
+      cmocka_unit_test(test_run_iss_failure_env),
 
-  /* Server */
-  g_test_add_func("/run/server/start", test_start_server);
-  g_test_add_func("/run/server/stop", test_stop_server);
+      /* Server */
+      cmocka_unit_test(test_start_server),
+      cmocka_unit_test(test_stop_server),
 
-  /* Instrument */
-  g_test_add_func("/run/instrument/start_no_plugin",
-                  test_start_instrument_no_plugin);
-  g_test_add_func("/run/instrument/start_with_plugin",
-                  test_start_instrument_with_plugin);
-  g_test_add_func("/run/instrument/stop", test_stop_instrument);
-  g_test_add_func("/run/instrument/status", test_instrument_status);
+      /* Instrument */
+      cmocka_unit_test(test_start_instrument_no_plugin),
+      cmocka_unit_test(test_start_instrument_with_plugin),
+      cmocka_unit_test(test_stop_instrument),
+      cmocka_unit_test(test_instrument_status),
 
-  /* Measurement */
-  g_test_add_func("/run/measurement/failure", test_perform_measurement_failure);
-  g_test_add_func("/run/measurement/script", test_measurement_from_script);
+      /* Measurement */
+      cmocka_unit_test(test_perform_measurement_failure),
+      cmocka_unit_test(test_measurement_from_script),
 
-  /* DI */
-  g_test_add_func("/run/di", test_dependency_injection);
+      /* DI */
+      cmocka_unit_test(test_dependency_injection),
+  };
 
-  return g_test_run();
+  return cmocka_run_group_tests(tests, NULL, NULL);
 }
