@@ -181,19 +181,39 @@ static void test_perform_measurement_failure(void **state) {
    Script-based measurement
 ================================ */
 
-static void test_measurement_from_script(void **state) {
+static void test_perform_measurement_success(void **state) {
   (void)state;
   setup_mock();
 
   const char *script = "function main(ctx) ctx:log('hello') end";
 
-  char *out = perform_measurement_from_script(script, "{}");
+  const MeasurementResult *res = perform_measurement(script, "{}");
 
-  assert_non_null((void *)out);
-  // Replaces g_strstr_len with standard strstr lookup
-  assert_non_null((void *)strstr(out, "result"));
+  assert_non_null((void *)res);
+  assert_string_equal(res->status, "success");
+  assert_string_equal(res->script_name, "iv_curve.lua");
+  assert_int_equal(res->step_count, 2);
+  assert_non_null((void *)res->steps);
 
-  free(out);
+  const ScriptStepResult *step0 = &res->steps[0];
+  assert_int_equal(step0->index, 0);
+  assert_string_equal(step0->instrument, "MockInstrument1:1");
+  assert_string_equal(step0->verb, "SET");
+  assert_non_null((void *)step0->params_json);
+  assert_int_equal(step0->return_type, VAL_TYPE_BOOL);
+  assert_true(step0->return_value.b_val);
+
+  const ScriptStepResult *step1 = &res->steps[1];
+  assert_int_equal(step1->index, 4);
+  assert_string_equal(step1->instrument, "Scope1");
+  assert_string_equal(step1->verb, "CAPTURE");
+  assert_int_equal(step1->return_type, VAL_TYPE_BUFFER);
+
+  assert_string_equal(step1->return_value.buf_val.buffer_id, "buf_abc123");
+  assert_int_equal(step1->return_value.buf_val.element_count, 10000);
+  assert_string_equal(step1->return_value.buf_val.data_type, "float32");
+
+  free_measurement_result(res);
 }
 
 /* ================================
@@ -277,7 +297,7 @@ int main(int argc, char **argv) {
 
       /* Measurement */
       cmocka_unit_test(test_perform_measurement_failure),
-      cmocka_unit_test(test_measurement_from_script),
+      cmocka_unit_test(test_perform_measurement_success),
 
       /* Buffer Mechanics */
       cmocka_unit_test(test_read_buffer_success),

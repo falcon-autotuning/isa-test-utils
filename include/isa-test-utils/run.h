@@ -49,9 +49,57 @@ ISA_TEST_UTILS_EXPORT void stop_instrument(const char *name);
 
 ISA_TEST_UTILS_EXPORT void stop_server(void);
 
-ISA_TEST_UTILS_EXPORT char *
-perform_measurement_from_script(const char *script_contents,
-                                const char *variables_json);
+// --- Measurement Types & APIs ---
+typedef enum {
+  VAL_TYPE_VOID = 0,
+  VAL_TYPE_DOUBLE,
+  VAL_TYPE_INT64,
+  VAL_TYPE_STRING,
+  VAL_TYPE_BOOL,
+  VAL_TYPE_BUFFER
+} ValueType;
+
+// Structured tracking block for buffer return variant metadata payloads
+typedef struct {
+  char *buffer_id;      // Heap-allocated string
+  size_t element_count; // Number of items in target shared memory space
+  char *data_type;      // Allocation format description (e.g. "float32")
+} BufferReturn;
+
+// Poly-morphic storage payload union tracking custom variant data mappings
+typedef union {
+  double d_val;
+  int64_t i_val;
+  char *s_val;
+  bool b_val;
+  BufferReturn buf_val;
+} ReturnValue;
+
+// Native layout representing a single step execution within the script array
+typedef struct {
+  int index;
+  char *instrument;  // Heap-allocated string
+  char *verb;        // Heap-allocated string
+  char *params_json; // Raw serialized snapshot parameters mapping
+  uint64_t executed_at_ms;
+  ValueType return_type;
+  ReturnValue return_value;
+} ScriptStepResult;
+
+// Top-level structure representation returned directly to your test units
+typedef struct {
+  char *status;      // Heap-allocated string ("success" / "failure")
+  char *script_name; // Heap-allocated string
+  int step_count;
+  ScriptStepResult *steps; // Continuous array allocated dynamically via malloc
+} MeasurementResult;
+
+ISA_TEST_UTILS_EXPORT const MeasurementResult *
+perform_measurement(const char *script_contents, const char *variables_json);
+ISA_TEST_UTILS_EXPORT void
+free_measurement_result(const MeasurementResult *res);
+
+// --- Buffer Types & APIs ---
 typedef struct {
   char *buffer_id; // heap-allocated string (free with free())
   int element_count;

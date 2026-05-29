@@ -411,7 +411,101 @@ void stop_instrument(const char *name) {
    Measurement
 ================================ */
 
-static char *perform_measurement(const char *script, const char *json) {
+static char *extract_json_blob(const char *text) {
+  if (!text)
+    return NULL;
+  const char *p = text;
+
+  /* Find first JSON structural boundary start point: '{' or '[' */
+  while (*p && *p != '{' && *p != '[') {
+    p++;
+  }
+  if (!*p)
+    return NULL;
+
+  char open_char = *p;
+  char close_char = (open_char == '{') ? '}' : ']';
+  const char *start = p;
+
+  int depth = 0;
+  bool in_string = false;
+  bool escape = false;
+
+  for (; *p; p++) {
+    char c = *p;
+
+    if (escape) {
+      escape = false;
+      continue;
+    }
+    if (c == '\\') {
+      escape = true;
+      continue;
+    }
+    if (c == '"') {
+      in_string = !in_string;
+      continue;
+    }
+
+    if (!in_string) {
+      if (c == open_char) {
+        depth++;
+      } else if (c == close_char) {
+        depth--;
+
+        if (depth == 0) {
+          // Replaces g_strndup with standard string extraction
+          size_t extracted_len = (size_t)(p - start + 1);
+          char *json_text = malloc(extracted_len + 1);
+          if (!json_text)
+            return NULL;
+
+          memcpy(json_text, start, extracted_len);
+          json_text[extracted_len] = '\0';
+
+          // Leverage cJSON to immediately validate the extracted chunk before
+          // returning
+          cJSON *test_parse = cJSON_Parse(json_text);
+          if (!test_parse) {
+            free(json_text);
+            return NULL;
+          }
+          cJSON_Delete(test_parse);
+
+          return json_text;
+        }
+      }
+    }
+  }
+
+  return NULL; // No fully matched JSON closure discovered
+}
+// Reusable intermediate function to parse primitive string tokens down to types
+static ValueType map_string_to_val_type(const char *str) {
+  if (!str)
+    return VAL_TYPE_VOID;
+  if (strcmp(str, "double") == 0)
+    return VAL_TYPE_DOUBLE;
+  if (strcmp(str, "int64") == 0)
+    return VAL_TYPE_INT64;
+  if (strcmp(str, "string") == 0)
+    return VAL_TYPE_STRING;
+  if (strcmp(str, "bool") == 0)
+    return VAL_TYPE_BOOL;
+  if (strcmp(str, "buffer") == 0)
+    return VAL_TYPE_BUFFER;
+  return VAL_TYPE_VOID;
+}
+
+ISA_TEST_UTILS_EXPORT const MeasurementResult *
+perform_measurement(const char *script_contents, const char *variables_json) {
+
+  // 1. Write the script contents out securely to an absolute scratch file
+  char *tmp_script_path = write_script_to_temp(script_contents);
+  if (!tmp_script_path)
+    return NULL;
+
+  // 2. Prepare the execution arguments structure
   UT_array *args;
   utarray_new(args, &ut_str_icd);
 
@@ -420,91 +514,187 @@ static char *perform_measurement(const char *script, const char *json) {
   const char *flag2 = "--json";
 
   utarray_push_back(args, &cmd);
-  utarray_push_back(args, &script);
+  utarray_push_back(args, &tmp_script_path);
   utarray_push_back(args, &flag1);
-  utarray_push_back(args, &json);
+  utarray_push_back(args, &variables_json);
   utarray_push_back(args, &flag2);
 
   ProcessResult r = run_iss(args);
   utarray_free(args);
 
+  // Clean up disk footprint unlinking temp script allocation path immediately
+  remove(tmp_script_path);
+  free(tmp_script_path);
+
   if (r.exit_code != 0) {
-    fprintf(stderr, "ERROR: Measurement failed: %s\n",
-            r.stderr_data ? r.stderr_data : "Unknown error");
+    fprintf(stderr, "ERROR: Measurement processing execution failure: %s\n",
+            r.stderr_data ? r.stderr_data : "Unknown");
     free(r.stdout_data);
     free(r.stderr_data);
     exit(1);
   }
-
   free(r.stderr_data);
-  return r.stdout_data;
+
+  // 3. Isolate the target json blob boundary from raw stdout noise
+  char *json_blob = extract_json_blob(r.stdout_data);
+  free(r.stdout_data);
+
+  if (!json_blob) {
+    fprintf(stderr, "ERROR: No valid measurement JSON block found in server "
+                    "stdout stream\n");
+    return NULL;
+  }
+
+  cJSON *json = cJSON_Parse(json_blob);
+  free(json_blob);
+
+  if (!json) {
+    fprintf(stderr, "ERROR: JSON tracking schema parse validation error\n");
+    exit(1);
+  }
+
+  // 4. Allocate and construct your native target matrix metadata wrapper
+  MeasurementResult *res = calloc(1, sizeof(MeasurementResult));
+  if (!res) {
+    cJSON_Delete(json);
+    return NULL;
+  }
+
+  cJSON *status_obj = cJSON_GetObjectItemCaseSensitive(json, "status");
+  cJSON *script_obj = cJSON_GetObjectItemCaseSensitive(json, "script");
+  cJSON *results_arr = cJSON_GetObjectItemCaseSensitive(json, "results");
+
+  res->status =
+      strdup(cJSON_IsString(status_obj) ? status_obj->valuestring : "failure");
+  res->script_name =
+      strdup(cJSON_IsString(script_obj) ? script_obj->valuestring : "unknown");
+
+  if (!cJSON_IsArray(results_arr)) {
+    res->step_count = 0;
+    res->steps = NULL;
+    cJSON_Delete(json);
+    return (const MeasurementResult *)res;
+  }
+
+  res->step_count = cJSON_GetArraySize(results_arr);
+  res->steps = calloc(res->step_count, sizeof(ScriptStepResult));
+
+  // 5. Serialize array indices over individual element blocks cleanly
+  int idx = 0;
+  cJSON *item = NULL;
+  cJSON_ArrayForEach(item, results_arr) {
+    if (idx >= res->step_count)
+      break;
+
+    cJSON *c_idx = cJSON_GetObjectItemCaseSensitive(item, "index");
+    cJSON *c_inst = cJSON_GetObjectItemCaseSensitive(item, "instrument");
+    cJSON *c_verb = cJSON_GetObjectItemCaseSensitive(item, "verb");
+    cJSON *c_params = cJSON_GetObjectItemCaseSensitive(item, "params");
+    cJSON *c_time = cJSON_GetObjectItemCaseSensitive(item, "executed_at_ms");
+    cJSON *c_return = cJSON_GetObjectItemCaseSensitive(item, "return");
+
+    ScriptStepResult *step = &res->steps[idx];
+    step->index = cJSON_IsNumber(c_idx) ? c_idx->valueint : idx;
+    step->instrument =
+        strdup(cJSON_IsString(c_inst) ? c_inst->valuestring : "");
+    step->verb = strdup(cJSON_IsString(c_verb) ? c_verb->valuestring : "");
+
+    // Preserve custom context mapping fields using printed unformatted strings
+    if (c_params) {
+      step->params_json = cJSON_PrintUnformatted(c_params);
+    } else {
+      step->params_json = strdup("{}");
+    }
+
+    step->executed_at_ms =
+        cJSON_IsNumber(c_time) ? (uint64_t)c_time->valuedouble : 0;
+
+    // Evaluate polymorph variant structures based on return properties
+    if (c_return && cJSON_IsObject(c_return)) {
+      cJSON *type_token = cJSON_GetObjectItemCaseSensitive(c_return, "type");
+      cJSON *val_token = cJSON_GetObjectItemCaseSensitive(c_return, "value");
+
+      const char *type_str =
+          cJSON_IsString(type_token) ? type_token->valuestring : "void";
+      step->return_type = map_string_to_val_type(type_str);
+
+      switch (step->return_type) {
+      case VAL_TYPE_DOUBLE:
+        step->return_value.d_val =
+            cJSON_IsNumber(val_token) ? val_token->valuedouble : 0.0;
+        break;
+      case VAL_TYPE_INT64:
+        step->return_value.i_val =
+            cJSON_IsNumber(val_token) ? (int64_t)val_token->valuedouble : 0;
+        break;
+      case VAL_TYPE_STRING:
+        step->return_value.s_val =
+            strdup(cJSON_IsString(val_token) ? val_token->valuestring : "");
+        break;
+      case VAL_TYPE_BOOL:
+        step->return_value.b_val =
+            cJSON_IsBool(val_token) ? cJSON_IsTrue(val_token) : false;
+        break;
+      case VAL_TYPE_BUFFER: {
+        cJSON *c_buf_id =
+            cJSON_GetObjectItemCaseSensitive(c_return, "buffer_id");
+        cJSON *c_buf_count =
+            cJSON_GetObjectItemCaseSensitive(c_return, "element_count");
+        cJSON *c_buf_type =
+            cJSON_GetObjectItemCaseSensitive(c_return, "data_type");
+
+        BufferReturn *b_ret = &step->return_value.buf_val;
+        b_ret->buffer_id =
+            strdup(cJSON_IsString(c_buf_id) ? c_buf_id->valuestring : "");
+
+        b_ret->element_count =
+            (size_t)(cJSON_IsNumber(c_buf_count) ? c_buf_count->valueint : 0);
+
+        b_ret->data_type = strdup(
+            cJSON_IsString(c_buf_type) ? c_buf_type->valuestring : "void");
+        break;
+      }
+      case VAL_TYPE_VOID:
+      default:
+        break;
+      }
+    } else {
+      step->return_type = VAL_TYPE_VOID;
+    }
+    idx++;
+  }
+
+  cJSON_Delete(json);
+  return (const MeasurementResult *)res;
 }
 
-char *perform_measurement_from_script(const char *contents, const char *json) {
-  char *tmp_path = NULL;
+ISA_TEST_UTILS_EXPORT void
+free_measurement_result(const MeasurementResult *res) {
+  if (!res)
+    return;
 
-#ifdef _WIN32
-  char temp_dir[MAX_PATH];
-  char temp_file[MAX_PATH];
+  // Cast away the read-only constraint inside destructor safely
+  MeasurementResult *m = (MeasurementResult *)res;
+  free(m->status);
+  free(m->script_name);
 
-  if (GetTempPathA(MAX_PATH, temp_dir) == 0) {
-    fprintf(stderr, "ERROR: Failed to get Windows temp path.\n");
-    exit(1);
+  if (m->steps) {
+    for (int i = 0; i < m->step_count; i++) {
+      ScriptStepResult *step = &m->steps[i];
+      free(step->instrument);
+      free(step->verb);
+      free(step->params_json);
+
+      if (step->return_type == VAL_TYPE_STRING) {
+        free(step->return_value.s_val);
+      } else if (step->return_type == VAL_TYPE_BUFFER) {
+        free(step->return_value.buf_val.buffer_id);
+        free(step->return_value.buf_val.data_type);
+      }
+    }
+    free(m->steps);
   }
-  if (GetTempFileNameA(temp_dir, "iss", 0, temp_file) == 0) {
-    fprintf(stderr, "ERROR: Failed to create Windows temp file name.\n");
-    exit(1);
-  }
-  // Convert Windows path into our standard heap string layout
-  tmp_path = _strdup(temp_file);
-#else
-  char template[] = "/tmp/iss-script-XXXXXX";
-  int fd = mkstemp(template);
-  if (fd < 0) {
-    perror("ERROR: mkstemp failed"); // Prints the exact OS reason (e.g.
-                                     // Permission Denied)
-    exit(1);
-  }
-  close(fd);
-
-  size_t path_len =
-      strlen(template) + 5; // 4 bytes for ".lua" + 1 for null terminator
-  tmp_path = malloc(path_len);
-  if (!tmp_path) {
-    fprintf(stderr, "ERROR: Memory allocation failed for tmp_path\n");
-    remove(template);
-    exit(1);
-  }
-
-  snprintf(tmp_path, path_len, "%s.lua", template);
-  remove(template);
-#endif
-
-  FILE *f = fopen(tmp_path, "wb");
-  if (!f) {
-    fprintf(stderr, "ERROR: Failed to open temp file for writing: %s\n",
-            tmp_path);
-    free(tmp_path);
-    exit(1);
-  }
-
-  size_t contents_len = strlen(contents);
-  if (contents_len > 0 &&
-      fwrite(contents, 1, contents_len, f) != contents_len) {
-    fprintf(stderr, "ERROR: Failed to write script contents to file.\n");
-    fclose(f);
-    remove(tmp_path);
-    free(tmp_path);
-    exit(1);
-  }
-  fclose(f);
-
-  char *out = perform_measurement(tmp_path, json);
-
-  remove(tmp_path);
-  free(tmp_path);
-
-  return out;
+  free(m);
 }
 bool map_string_to_array_type(const char *str, ArrayType *out_type,
                               size_t *out_size) {

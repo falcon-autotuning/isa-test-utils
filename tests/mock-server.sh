@@ -60,7 +60,50 @@ instrument)
   ;;
 
 measure)
-  echo "{\"result\": 42}"
+  # Dynamic fallback lookup checking for structural --json requirements
+  is_json=0
+  for arg in "$@"; do
+    if [ "$arg" = "--json" ]; then
+      is_json=1
+    fi
+  done
+
+  if [ "$is_json" = "1" ]; then
+    # Return a comprehensive structured schema layout matching your client parser expectations
+    echo "{"
+    echo "  \"status\": \"success\","
+    echo "  \"script\": \"iv_curve.lua\","
+    echo "  \"results\": ["
+    echo "    {"
+    echo "      \"index\": 0,"
+    echo "      \"instrument\": \"MockInstrument1:1\","
+    echo "      \"verb\": \"SET\","
+    echo "      \"params\": {\"value\": 5.0},"
+    echo "      \"executed_at_ms\": 1704720615123,"
+    echo "      \"return\": {"
+    echo "        \"type\": \"bool\","
+    echo "        \"value\": true"
+    echo "      }"
+    echo "    },"
+    echo "    {"
+    echo "      \"index\": 4,"
+    echo "      \"instrument\": \"Scope1\","
+    echo "      \"verb\": \"CAPTURE\","
+    echo "      \"params\": {},"
+    echo "      \"executed_at_ms\": 1704720615127,"
+    echo "      \"return\": {"
+    echo "        \"type\": \"buffer\","
+    echo "        \"buffer_id\": \"buf_abc123\","
+    echo "        \"element_count\": 10000,"
+    echo "        \"data_type\": \"float32\""
+    echo "      }"
+    echo "    }"
+    echo "  ]"
+    echo "}"
+  else
+    # Simple unformatted fallback legacy tracker output format
+    echo "{\"result\": 42}"
+  fi
   echo "debug: measurement ok" >&2
   exit 0
   ;;
