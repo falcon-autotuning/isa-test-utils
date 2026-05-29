@@ -193,7 +193,20 @@ ProcessResult run_executable(const char *exe, void *args) {
   UT_array *arr = (UT_array *)args;
   char **argv = utarray_to_strv(arr);
   unsigned int argc = arr ? utarray_len(arr) : 0;
-  char **full = calloc(argc + 2, sizeof(char *));
+
+  // Detect if we need an explicit interpreter wrapper for shell scripts on
+  // Windows
+  bool needs_sh_wrapper = false;
+#ifdef _WIN32
+  if (exe && strstr(exe, ".sh") != NULL) {
+    needs_sh_wrapper = true;
+  }
+#endif
+
+  // Adjust array size calculation to accommodate the "sh" wrapper prefix if
+  // needed
+  unsigned int extra_slots = needs_sh_wrapper ? 2 : 1;
+  char **full = calloc(argc + extra_slots + 1, sizeof(char *));
   if (!full) {
     free_strv(argv);
     result.exit_code = -1;
@@ -202,11 +215,19 @@ ProcessResult run_executable(const char *exe, void *args) {
     return result;
   }
 
-  full[0] = strdup(exe);
-  for (unsigned int i = 0; i < argc; i++) {
-    full[i + 1] = strdup(argv[i]);
+  unsigned int dest_idx = 0;
+#ifdef _WIN32
+  if (needs_sh_wrapper) {
+    full[dest_idx++] =
+        strdup("sh"); // Invoke Git Bash / POSIX environment interpreter
   }
-  full[argc + 1] = NULL; // Explicit null termination
+#endif
+
+  full[dest_idx++] = strdup(exe);
+  for (unsigned int i = 0; i < argc; i++) {
+    full[dest_idx++] = strdup(argv[i]);
+  }
+  full[dest_idx] = NULL; // Explicit null termination
 
   char *out = NULL;
   char *err = NULL;
