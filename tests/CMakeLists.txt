@@ -96,7 +96,7 @@ function(copy_runtime_dll target)
     )
     add_custom_command(TARGET ${target} POST_BUILD
       COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        $<TARGET_FILE:cJSON::cJSON> # Using vcpkg target namespace
+        $<TARGET_FILE:cjson> 
         $<TARGET_FILE_DIR:${target}>
     )
   endif()
