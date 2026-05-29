@@ -4,6 +4,7 @@ include(CMakeFindDependencyMacro)
 
 find_path(UTHASH_INCLUDE_DIRS "utarray.h")
 find_dependency(cJSON CONFIG REQUIRED)
+find_dependency(instrument-data CONFIG REQUIRED)
 include("${CMAKE_CURRENT_LIST_DIR}/isa-test-utils-targets.cmake")
 
 include("${CMAKE_CURRENT_LIST_DIR}/embed_bundle.cmake")
