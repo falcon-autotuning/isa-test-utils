@@ -53,12 +53,24 @@ file(CHMOD
   PERMISSIONS OWNER_EXECUTE OWNER_WRITE OWNER_READ GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE
 )
 
+# ============================================================
+# Convert paths to native OS layouts before baking them into C
+# ============================================================
+file(TO_NATIVE_PATH "${CMAKE_BINARY_DIR}/mock-server.sh" NATIVE_MOCK_SERVER_PATH)
+file(TO_NATIVE_PATH "${CMAKE_BINARY_DIR}/mock-template-expander.sh" NATIVE_MOCK_EXPANDER_PATH)
+
+# Escape backslashes for the C compiler on Windows
+if (WIN32)
+  string(REPLACE "\\" "\\\\" NATIVE_MOCK_SERVER_PATH "${NATIVE_MOCK_SERVER_PATH}")
+  string(REPLACE "\\" "\\\\" NATIVE_MOCK_EXPANDER_PATH "${NATIVE_MOCK_EXPANDER_PATH}")
+endif()
+
 target_compile_definitions(unit_test_run PRIVATE
-  MOCK_SERVER_PATH="${CMAKE_BINARY_DIR}/mock-server.sh"
+  MOCK_SERVER_PATH="${NATIVE_MOCK_SERVER_PATH}"
 )
 
 target_compile_definitions(unit_test_setup PRIVATE
-  MOCK_EXPANDER_PATH="${CMAKE_BINARY_DIR}/mock-template-expander.sh"
+  MOCK_EXPANDER_PATH="${NATIVE_MOCK_EXPANDER_PATH}"
 )
 
 function(copy_runtime_dll target)
