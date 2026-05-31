@@ -19,7 +19,7 @@ typedef struct {
   UT_array *config_files;
   UT_array *plugin_files;
 } EmbeddedYamls;
-void embedded_yamls_free(EmbeddedYamls *eya);
+ISA_TEST_UTILS_EXPORT void embedded_yamls_free(EmbeddedYamls *eya);
 
 // String pair replacements for config yaml templates
 // Concrete implementation hidden from public header consumers
