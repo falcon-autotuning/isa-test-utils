@@ -138,6 +138,11 @@
       "jobs": 0
     },
     {
+      "name": "windows-clang-cl-asan",
+      "configurePreset": "windows-clang-cl-asan",
+      "jobs": 0
+    },
+    {
       "name": "windows-clang-cl-release",
       "configurePreset": "windows-clang-cl-release",
       "jobs": 0
@@ -163,6 +168,10 @@
     {
       "name": "windows-clang-cl-debug",
       "configurePreset": "windows-clang-cl-debug"
+    },
+    {
+      "name": "windows-clang-cl-asan",
+      "configurePreset": "windows-clang-cl-asan"
     },
     {
       "name": "windows-clang-cl-release",
