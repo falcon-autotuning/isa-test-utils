@@ -10,7 +10,12 @@
 #include <stddef.h>
 
 #ifdef _WIN32
+#include <windows.h>
+#include <io.h>
+#define access _access
 #define F_OK 0
+#define R_OK 4
+#define W_OK 2
 #define strdup _strdup
 #else
 #include <dirent.h>
