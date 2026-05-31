@@ -84,20 +84,6 @@
       }
     },
     {
-      "name": "windows-clang-cl-asan",
-      "inherits": "default",
-      "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Debug",
-        "CMAKE_C_COMPILER": "clang-cl",
-        "CMAKE_CXX_COMPILER": "clang-cl",
-        "VCPKG_TARGET_TRIPLET": "x64-win-llvm",
-        "CMAKE_MSVC_RUNTIME_LIBRARY": "MultiThreaded",
-        "CMAKE_C_FLAGS_INIT": "/Zi /Od /fsanitize=address",
-        "CMAKE_CXX_FLAGS_INIT": "/Zi /Od /fsanitize=address",
-        "CMAKE_TRY_COMPILE_TARGET_TYPE": "STATIC_LIBRARY"
-      }
-    },
-    {
       "name": "windows-clang-cl-release",
       "description": "Windows Release build with clang-cl",
       "inherits": "default",
