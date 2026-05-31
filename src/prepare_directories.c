@@ -77,11 +77,6 @@ static bool is_template_file(const char *path) {
   return has_suffix(path, ".tmpl");
 }
 
-// Concrete implementation hidden from public header consumers
-struct Replacements {
-  UT_array *pairs;
-};
-
 // Internal destructor callback to automatically wipe pairs
 static void free_pair_cb(void *elt) {
   PairString *p = *(PairString **)elt;

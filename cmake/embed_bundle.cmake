@@ -164,7 +164,7 @@ static inline EnvLocations prepare_environment(const char *first_key, ...) {
 
   va_end(args);
 
-  return _prepare_environment(eya, reps);
+  return _prepare_environment(eya, *reps);
 }
 ]])
 endfunction()

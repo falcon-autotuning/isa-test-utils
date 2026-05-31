@@ -22,7 +22,10 @@ typedef struct {
 void embedded_yamls_free(EmbeddedYamls *eya);
 
 // String pair replacements for config yaml templates
-typedef struct Replacements Replacements;
+// Concrete implementation hidden from public header consumers
+typedef struct {
+  UT_array *pairs;
+} Replacements;
 ISA_TEST_UTILS_EXPORT Replacements *replacements_new(void);
 ISA_TEST_UTILS_EXPORT void replacements_free(Replacements *repls);
 // Adds a replacement pair to the stack
