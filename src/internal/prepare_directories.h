@@ -3,8 +3,6 @@
 #include "isa-test-utils/embed_runtime.h"
 #include "isa-test-utils.h"
 
-ISA_TEST_UTILS_EXPORT void replacements_free(Replacements *repls);
-
 ISA_TEST_UTILS_EXPORT Path *prepare_isa_directory(void *files, Path *root);
 ISA_TEST_UTILS_EXPORT Path *
 prepare_config_directory(void *files, Path *root,

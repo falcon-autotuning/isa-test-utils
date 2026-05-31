@@ -12,6 +12,9 @@ function(embed_bundle)
   file(WRITE ${EMBED_OUTPUT} [[
 #pragma once
 #include <stdlib.h>
+#include <stdarg.h>
+#include <stdio.h>
+#include <string.h>
 #include <utarray.h>
 #include <isa-test-utils.h>
 #include <isa-test-utils/embed_runtime.h>
@@ -31,9 +34,9 @@ static inline EmbeddedYamls get_embedded_bundle(void) {
   static const UT_icd embedded_file_icd = {sizeof(EmbeddedFile *), NULL, NULL, _embed_free_file_cb};
 
   // Allocate arrays using the void* target format required by your new runtime signatures
-  utarray_new(*(UT_array **)&bundle.isa_files,    &embedded_file_icd);
-  utarray_new(*(UT_array **)&bundle.config_files, &embedded_file_icd);
-  utarray_new(*(UT_array **)&bundle.plugin_files, &embedded_file_icd);
+  utarray_new(bundle.isa_files,    &embedded_file_icd);
+  utarray_new(bundle.config_files, &embedded_file_icd);
+  utarray_new(bundle.plugin_files, &embedded_file_icd);
 ]])
 
   macro(EMBED_CATEGORY FILE_LIST CATEGORY_NAME)
@@ -68,7 +71,7 @@ static inline EmbeddedYamls get_embedded_bundle(void) {
     }
     e->size = ${sym}_len;
 
-    utarray_push_back(*(UT_array **)&bundle.${CATEGORY_NAME}, &e);
+    utarray_push_back(bundle.${CATEGORY_NAME}, &e);
   }
 ")
     endforeach()

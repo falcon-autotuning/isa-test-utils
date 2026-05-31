@@ -522,17 +522,17 @@ void embedded_yamls_free(EmbeddedYamls *eya) {
     return;
 
   if (eya->isa_files) {
-    utarray_free((UT_array *)eya->isa_files);
+    utarray_free(eya->isa_files);
     eya->isa_files = NULL;
   }
 
   if (eya->config_files) {
-    utarray_free((UT_array *)eya->config_files);
+    utarray_free(eya->config_files);
     eya->config_files = NULL;
   }
 
   if (eya->plugin_files) {
-    utarray_free((UT_array *)eya->plugin_files);
+    utarray_free(eya->plugin_files);
     eya->plugin_files = NULL;
   }
 }

@@ -5,6 +5,7 @@
 // Layout may change between versions.
 
 #include <stddef.h>
+#include <utarray.h>
 #include "isa-test-utils/isa-test-utils-export.h"
 #include "isa-test-utils.h"
 typedef struct {
@@ -14,16 +15,16 @@ typedef struct {
 } EmbeddedFile;
 
 typedef struct {
-  void *isa_files;    // Managed UT_array* containing EmbeddedFile* elements
-  void *config_files; // Managed UT_array* containing EmbeddedFile* elements
-  void *plugin_files; // Managed UT_array* containing EmbeddedFile* elements
-                      // (optional)
+  UT_array *isa_files;
+  UT_array *config_files;
+  UT_array *plugin_files;
 } EmbeddedYamls;
 void embedded_yamls_free(EmbeddedYamls *eya);
 
 // String pair replacements for config yaml templates
 typedef struct Replacements Replacements;
 ISA_TEST_UTILS_EXPORT Replacements *replacements_new(void);
+ISA_TEST_UTILS_EXPORT void replacements_free(Replacements *repls);
 // Adds a replacement pair to the stack
 ISA_TEST_UTILS_EXPORT void replacements_add(Replacements *repls,
                                             const char *key, const char *value);
