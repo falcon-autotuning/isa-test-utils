@@ -84,6 +84,23 @@
       }
     },
     {
+      "name": "windows-clang-cl-asan",
+      "inherits": "default",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "CMAKE_C_COMPILER": "clang-cl",
+        "CMAKE_CXX_COMPILER": "clang-cl",
+        "VCPKG_TARGET_TRIPLET": "x64-win-llvm",
+        "CMAKE_PREFIX_PATH": "${sourceDir}/vcpkg_installed/x64-win-llvm/share;${sourceDir}/vcpkg_installed",
+        "CMAKE_MSVC_RUNTIME_LIBRARY": "MultiThreadedDLL",
+        "CMAKE_C_FLAGS": "/Zi /Od -fsanitize=address",
+        "CMAKE_CXX_FLAGS": "/Zi /Od -fsanitize=address",
+        "CMAKE_EXE_LINKER_FLAGS": "-fsanitize=address",
+        "CMAKE_SHARED_LINKER_FLAGS": "-fsanitize=address",
+        "DENABLE_DEBUG_LOGS": true
+      }
+    },
+    {
       "name": "windows-clang-cl-release",
       "description": "Windows Release build with clang-cl",
       "inherits": "default",
