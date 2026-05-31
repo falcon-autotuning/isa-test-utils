@@ -1,273 +1,331 @@
 # isa-test-utils
 
-A C99 test utility library for building fully hermetic instrument integration tests.
+isa-test-utils is a C99 library for building fully hermetic instrument integration tests.
 
-This library allows you to embed ISA definitions, config templates, and optional plugins directly into your test binary, extract them at runtime, and run reproducible tests with no reliance on the local filesystem.
+It allows you to embed ISA definitions, configuration templates, and optional plugins
+directly into your test binary, extract them at runtime, and execute reproducible tests
+with no reliance on external files.
 
----------------------------------------------------------------------
-
-## ✅ Core Idea
-
-Instead of depending on external files:
-
-- ISA definitions
-- Config files
-- Plugins
-
-You embed everything into your test binary at build time.
-
-At runtime, the library extracts them into a temporary directory and prepares a complete environment.
+Instead of managing runtime files manually, your test binary contains everything it needs.
+At runtime, the library extracts these resources into a temporary directory, applies
+configuration replacements, and prepares a fully functional test environment.
 
 ---------------------------------------------------------------------
 
-## 🚀 Key Feature
+## Quickstart
 
-You should always use:
-
-```c
-PrepareEnvironmentResult env =
-    prepare_full_environment_bundle(&bundle, replacements);
-```
-
-This function:
-
-- Extracts ISA files
-- Expands `.tmpl` files
-- Generates config from `.in` templates
-- Extracts plugin binaries (optional)
-
----------------------------------------------------------------------
-
-## 📦 Building
-
-Requirements:
+### Requirements
 
 - CMake ≥ 3.20
-- C compiler (gcc/clang/MSVC)
+- C compiler (gcc / clang)
+- `instrument-script-server` installed and available on your system `PATH`
 
-Build:
+The test runtime depends on `instrument-script-server`. Tests will fail if it is not found.
 
-```
-cmake -B build -S .
-cmake --build build
-```
+---
 
-Install:
+### 1. Embed Files (CMake)
 
-```
-cmake --install build
-```
-
----------------------------------------------------------------------
-
-## 🔧 Using in Your Project
-
-### Find Package
-
-```
+```cmake
 find_package(isa-test-utils REQUIRED)
-```
 
-### Link
-
-```
-target_link_libraries(my_test
-    PRIVATE isa-test-utils::isa-test-utils
-)
-```
-
----------------------------------------------------------------------
-
-## 📦 Embedding Files (IMPORTANT)
-
-You must embed all required files at build time.
-
-### Example layout
-
-```
-isa/
-config/
-plugins/
-```
-
-### Collect files
-
-```
 file(GLOB_RECURSE ISA_FILES    "${CMAKE_SOURCE_DIR}/isa/*")
 file(GLOB_RECURSE CONFIG_FILES "${CMAKE_SOURCE_DIR}/config/*")
-file(GLOB_RECURSE PLUGIN_FILES "${CMAKE_SOURCE_DIR}/plugins/*")
-```
+file(GLOB_RECURSE PLUGIN_FILES "${CMAKE_SOURCE_DIR}/plugins/*") # optional
 
-### Generate embedded bundle
-
-```
 isa_test_utils_embed_bundle(
   OUTPUT ${CMAKE_BINARY_DIR}/embedded_bundle.h
   ISA_FILES ${ISA_FILES}
   CONFIG_FILES ${CONFIG_FILES}
   PLUGIN_FILES ${PLUGIN_FILES}
 )
-```
+````
 
----------------------------------------------------------------------
+***
 
-## 🧪 Writing Tests
-
-### Include bundle and data structures
+### 2. Use in Tests
 
 ```c
 #include "embedded_bundle.h"
-#include "utarray.h" // For handling argument and replacement lists
-```
+#include <isa-test-utils.h>
 
-### Build bundle
+EnvLocations env = prepare_environment(
+    "__DEVICE_NAME__", "MyInstrument",
+    NULL
+);
 
-```c
-EmbeddedBundle bundle = get_embedded_bundle();
-```
-
-### Define replacements (for `.in` files)
-
-Initialize a `UT_array` using the pair-string control descriptor to pass dynamic replacement options safely:
-
-```c
-// Define the custom pair tracking metadata descriptor
-static void free_pair_string_cb(void *elt) {
-  PairString *p = *(PairString **)elt;
-  if (!p) return;
-  free(p->first);
-  free(p->second);
-  free(p);
-}
-static const UT_icd pair_string_icd = {sizeof(PairString *), NULL, NULL, free_pair_string_cb};
-
-// Instantiate the replacements container
-UT_array *replacements;
-utarray_new(replacements, &pair_string_icd);
-
-PairString *p = calloc(1, sizeof(PairString));
-p->first = strdup("__NAME__");
-p->second = strdup("MyInstrument");
-
-utarray_push_back(replacements, &p);
-```
-
-### Prepare environment
-
-```c
-PrepareEnvironmentResult env =
-    prepare_full_environment_bundle(&bundle, (void *)replacements);
-```
-
-### Run your tests
-
-```c
 start_server();
+start_instrument(env.config_dir, NULL);
+
+/* run tests */
+
+stop_instrument("MyInstrument");
+stop_server();
+
+cleanup_environment(&env);
 ```
 
-### Cleanup
+***
+
+### 3. Build and Run
+
+```bash
+make build PRESET=<preset from CMakePresets.json>
+```
+
+***
+
+## Test Setup (Detailed)
+
+Tests are typically structured using global setup/teardown.
+
+### Global Setup
 
 ```c
-cleanup_environment(&env);
-utarray_free(replacements); // Free the container after cleanup
+static EnvLocations env;
+static Path *config_path = NULL;
+
+static int global_group_setup(void **state) {
+  (void)state;
+
+  env = prepare_environment(
+      "__DEVICE_NAME__", "MyInstrument",
+      "__ADDRESS__", "127.0.0.1",
+      NULL
+  );
+
+  config_path = path_clone(env.config_dir);
+  path_push(config_path, "instrument.yml");
+
+  return 0;
+}
 ```
 
----------------------------------------------------------------------
+### Global Teardown
 
-## 📂 Template Behavior
+```c
+static int global_group_teardown(void **state) {
+  (void)state;
 
-### `.tmpl` files
+  cleanup_environment(&env);
+  path_free(config_path);
 
-- Passed to external template-expander
-- Output replaces `.tmpl`
-
-Example:
-
-```
-driver.yml.tmpl → driver.yml
+  return 0;
+}
 ```
 
----
+### Per-Test Setup
+
+```c
+static void test_setup(void) {
+  start_server();
+  start_instrument(config_path, NULL);
+}
+
+static void test_teardown(void) {
+  stop_instrument("MyInstrument");
+  stop_server();
+}
+```
+
+***
+
+## Measurement Script Example
+
+Most real tests use measurement scripts.
+
+```c
+const char *script =
+    flatten_yaml(
+        "function main(ctx, value)\n"
+        "  ctx:call(\"device.SET\", value)\n"
+        "  ctx:call(\"device.GET?\")\n"
+        "end\n"
+    );
+
+Map *vars = map_new();
+map_add_float(vars, "value", 5.0f);
+
+const Result *res = perform_measurement(script, vars);
+
+/* inspect results */
+
+free(script);
+free_result(res);
+map_free(vars);
+```
+
+The returned `Result` contains step-by-step execution details that can be used
+for validation.
+
+***
+
+## Environment Creation
+
+The generated function:
+
+```c
+EnvLocations prepare_environment(const char *first_key, ...);
+```
+
+- Extracts embedded ISA files
+- Processes configuration templates
+- Applies key/value substitutions
+- Extracts plugins (optional)
+- Returns an environment layout
+
+### Replacement Arguments
+
+```c
+EnvLocations env = prepare_environment(
+    "KEY1", "value1",
+    "KEY2", "value2",
+    NULL
+);
+```
+
+Rules:
+
+- Must be key/value pairs
+- Must terminate with `NULL`
+- Keys and values must be `const char *`
+
+***
+
+## Template Behavior
 
 ### `.in` files
 
-- Processed internally
-- Uses `PairString` replacements
-
-Example:
+Configuration templates should use `.in`:
 
 ```
 config.yml.in → config.yml
 ```
 
----------------------------------------------------------------------
-
-## 🔌 Plugin Handling
-
-Plugins are:
-
-- Embedded as raw binaries
-- Extracted as-is
-
-Supported platforms:
-
-- Linux: `.so`
-- Windows: `.dll`
-
-Plugins are optional.
-
----------------------------------------------------------------------
-
-## 📁 Runtime Output
-
-The system creates a temporary directory:
-
-```
-[System Temp]/test_env/
-    isa/
-    config/
-    plugins/
-```
-
----------------------------------------------------------------------
-
-## ⚠️ Important
-
-- The library cannot discover files automatically
-- Everything must be embedded via CMake
-- Templates must use `.in` extension for replacement
-- All allocations transfer to standard `free()` structures instead of custom library macros
+Values are replaced using arguments passed to `prepare_environment()`.
 
 Example:
 
 ```
-name: __NAME__
+name: __DEVICE_NAME__
 address: __ADDRESS__
 ```
 
----------------------------------------------------------------------
+***
 
-## ✅ Recommended Workflow
+### `.tmpl` files
+
+- Processed via external template expansion
+- Output replaces `.tmpl`
+
+```
+driver.yml.tmpl → driver.yml
+```
+
+***
+
+## Plugin Handling
+
+Plugins are optional.
+
+If provided:
+
+- Embedded into the binary
+- Extracted at runtime
+- Available at `env.plugin_dir`
+
+If not provided:
+
+```
+env.plugin_dir == NULL
+```
+
+Supported formats:
+
+- Linux: `.so`
+- Windows: `.dll`
+
+***
+
+## Runtime Output
+
+A temporary directory is created:
+
+```
+<system temp>/test_env/
+    isa/
+    config/
+    plugins/   (optional)
+```
+
+***
+
+## Memory Ownership
+
+- EnvLocations → cleanup\_environment()
+- Result → free\_result()
+- Map → map\_free()
+- Strings → free()
+
+All other memory is managed internally.
+
+***
+
+## API Overview
+
+Environment:
+
+- prepare\_environment (generated)
+- cleanup\_environment
+
+Runtime:
+
+- start\_server
+- start\_instrument
+- stop\_instrument
+- stop\_server
+
+Measurement:
+
+- perform\_measurement
+- free\_result
+
+Inputs:
+
+- map\_new
+- map\_add\_\*
+- map\_free
+
+Utilities:
+
+- flatten\_yaml
+- name\_with\_index
+- get\_required\_env\_\*
+
+***
+
+## Recommended Workflow
 
 1. Embed ISA/config/plugin files with CMake
 2. Generate embedded bundle
-3. Use `prepare_full_environment_bundle`
-4. Run tests
-5. Cleanup
+3. Call `prepare_environment(...)`
+4. Start server and instrument
+5. Execute measurement scripts
+6. Validate results
+7. Cleanup
 
----------------------------------------------------------------------
+***
 
-## 🤝 Contributing
+## Building
 
-Contributions welcome!
-Focus areas:
+```bash
+cmake -B build -S .
+cmake --build build
+cmake --install build
+```
 
-- platform support improvements
-- plugin handling enhancements
-- template tooling extensions
+***
 
----------------------------------------------------------------------
+## License
 
-## 📄 License
-
-MPLv2.0
+Mozilla Public License v2.0 (MPL-2.0)

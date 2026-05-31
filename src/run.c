@@ -1,8 +1,11 @@
-#include "isa-test-utils/run.h"
-#include "isa-test-utils/setup.h"
+#include "isa-test-utils.h"
+#include "internal/measurement-helpers.h"
+#include "internal/exec.h"
+#include "path.h"
 #include "utarray.h"
 #include <cjson/cJSON.h>
 #include <instrument-data.h>
+#include <stdarg.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -140,6 +143,303 @@ static bool os_spawn_sync(char **argv, char **out_str, char **err_str,
   *status = WIFEXITED(wait_status) ? WEXITSTATUS(wait_status) : -1;
   return (*status != 127);
 #endif
+}
+
+// Concrete definition hidden entirely from your public API consumers
+// Types of data our map values can hold
+typedef enum {
+  MAP_INT = 0,
+  MAP_FLOAT,
+  MAP_STRING,
+  MAP_BOOL,
+  MAP_ARRAY_STRING,
+  MAP_ARRAY_NUMBER,
+  MAP_ARRAY_BOOLEAN
+} MapValueType;
+
+// Individual Key-Value entry layout
+typedef struct {
+  char *key;
+  MapValueType type;
+  union {
+    float f_val;
+    int i_val;
+    char *string_val;
+    bool bool_val;
+    void *as_val;
+    void *an_val;
+    void *ab_val;
+  } value;
+} MapEntry;
+struct Map {
+  UT_array *entries;
+};
+
+// Internal destructor to deep-free allocated union variants and strings cleanly
+static void free_map_entry_cb(void *elt) {
+  MapEntry *e = *(MapEntry **)elt;
+  if (!e)
+    return;
+
+  free(e->key);
+
+  switch (e->type) {
+  case MAP_STRING:
+    free(e->value.string_val);
+    break;
+  case MAP_ARRAY_STRING:
+    if (e->value.as_val) {
+      // Cast to UT_array* to clear the string elements via its native ICD
+      utarray_free((UT_array *)e->value.as_val);
+    }
+    break;
+  case MAP_ARRAY_NUMBER:
+    if (e->value.an_val) {
+      utarray_free((UT_array *)e->value.an_val);
+    }
+    break;
+  case MAP_ARRAY_BOOLEAN:
+    if (e->value.ab_val) {
+      utarray_free((UT_array *)e->value.ab_val);
+    }
+    break;
+  default:
+    break; // Primitives require no extra nested cleanup passes
+  }
+  free(e);
+}
+
+// Map configuration entry descriptor block metadata
+static const UT_icd map_entry_icd = {sizeof(MapEntry *), NULL, NULL,
+                                     free_map_entry_cb};
+
+Map *map_new() {
+  Map *m = calloc(1, sizeof(Map));
+  if (!m)
+    return NULL;
+
+  utarray_new(m->entries, &map_entry_icd);
+  return m;
+}
+
+void map_free(Map *map) {
+  if (!map)
+    return;
+  // This automatically deep-frees all internally allocated entries via our
+  // free_map_entry_cb
+  utarray_free(map->entries);
+  free(map);
+}
+
+void map_add_float(Map *map, const char *key, float val) {
+  if (!map || !key)
+    return;
+  MapEntry *e = calloc(1, sizeof(MapEntry));
+  if (!e)
+    return;
+
+  e->key = strdup(key);
+  e->type = MAP_FLOAT;
+  e->value.f_val = val;
+  utarray_push_back(map->entries, &e);
+}
+
+void map_add_int(Map *map, const char *key, int val) {
+  if (!map || !key)
+    return;
+  MapEntry *e = calloc(1, sizeof(MapEntry));
+  if (!e)
+    return;
+
+  e->key = strdup(key);
+  e->type = MAP_INT;
+  e->value.i_val = val;
+  utarray_push_back(map->entries, &e);
+}
+
+void map_add_string(Map *map, const char *key, const char *val) {
+  if (!map || !key)
+    return;
+  MapEntry *e = calloc(1, sizeof(MapEntry));
+  if (!e)
+    return;
+
+  e->key = strdup(key);
+  e->type = MAP_STRING;
+  e->value.string_val = strdup(val ? val : "");
+  utarray_push_back(map->entries, &e);
+}
+
+void map_add_bool(Map *map, const char *key, bool val) {
+  if (!map || !key)
+    return;
+  MapEntry *e = calloc(1, sizeof(MapEntry));
+  if (!e)
+    return;
+
+  e->key = strdup(key);
+  e->type = MAP_BOOL;
+  e->value.bool_val = val;
+  utarray_push_back(map->entries, &e);
+}
+
+/* =========================================================================
+   Opaque Array Handlers
+   ========================================================================= */
+
+// Custom copy callbacks for tracking array primitives cleanly inside cloned
+// maps
+static const UT_icd native_float_icd = {sizeof(float), NULL, NULL, NULL};
+static const UT_icd native_bool_icd = {sizeof(bool), NULL, NULL, NULL};
+static void free_str_cb(void *elt) {
+  char *s = *(char **)elt;
+  free(s);
+}
+static const UT_icd owned_str_icd = {sizeof(char *), NULL, NULL, free_str_cb};
+
+void map_add_array_string(Map *map, const char *key, void *val) {
+  if (!map || !key || !val)
+    return;
+  MapEntry *e = calloc(1, sizeof(MapEntry));
+  if (!e)
+    return;
+
+  e->key = strdup(key);
+  e->type = MAP_ARRAY_STRING;
+
+  // Clone incoming dynamic string utarray to maintain clean, isolated memory
+  // ownership
+  UT_array *src = (UT_array *)val;
+  UT_array *dst;
+  utarray_new(dst, &owned_str_icd);
+
+  char **p = NULL;
+  while ((p = (char **)utarray_next(src, p))) {
+    char *str_copy = strdup(*p);
+    utarray_push_back(dst, &str_copy);
+  }
+  e->value.as_val = (void *)dst;
+  utarray_push_back(map->entries, &e);
+}
+
+void map_add_array_number(Map *map, const char *key, void *val) {
+  if (!map || !key || !val)
+    return;
+  MapEntry *e = calloc(1, sizeof(MapEntry));
+  if (!e)
+    return;
+
+  e->key = strdup(key);
+  e->type = MAP_ARRAY_NUMBER;
+
+  UT_array *src = (UT_array *)val;
+  UT_array *dst;
+  utarray_new(dst, &native_float_icd);
+
+  float *p = NULL;
+  while ((p = (float *)utarray_next(src, p))) {
+    utarray_push_back(dst, p);
+  }
+  e->value.an_val = (void *)dst;
+  utarray_push_back(map->entries, &e);
+}
+
+void map_add_array_bool(Map *map, const char *key, void *val) {
+  if (!map || !key || !val)
+    return;
+  MapEntry *e = calloc(1, sizeof(MapEntry));
+  if (!e)
+    return;
+
+  e->key = strdup(key);
+  e->type = MAP_ARRAY_BOOLEAN;
+
+  UT_array *src = (UT_array *)val;
+  UT_array *dst;
+  utarray_new(dst, &native_bool_icd);
+
+  bool *p = NULL;
+  while ((p = (bool *)utarray_next(src, p))) {
+    utarray_push_back(dst, p);
+  }
+  e->value.ab_val = (void *)dst;
+  utarray_push_back(map->entries, &e);
+}
+
+char *map_to_json(const Map *map) {
+  if (!map || !map->entries)
+    return strdup("{}");
+
+  cJSON *root = cJSON_CreateObject();
+  if (!root)
+    return NULL;
+
+  unsigned int num_elements = utarray_len(map->entries);
+  for (unsigned int i = 0; i < num_elements; i++) {
+    MapEntry **entry_ptr = (MapEntry **)utarray_eltptr(map->entries, i);
+    if (!entry_ptr || !(*entry_ptr))
+      continue;
+    MapEntry *e = *entry_ptr;
+
+    if (!e->key)
+      continue;
+
+    switch (e->type) {
+    case MAP_FLOAT:
+      cJSON_AddNumberToObject(root, e->key, (double)e->value.f_val);
+      break;
+    case MAP_INT:
+      cJSON_AddNumberToObject(root, e->key, e->value.i_val);
+      break;
+    case MAP_STRING:
+      cJSON_AddStringToObject(root, e->key,
+                              e->value.string_val ? e->value.string_val : "");
+      break;
+    case MAP_BOOL:
+      cJSON_AddBoolToObject(root, e->key, e->value.bool_val);
+      break;
+    case MAP_ARRAY_STRING: {
+      cJSON *arr = cJSON_CreateArray();
+      UT_array *str_arr = (UT_array *)e->value.as_val;
+      if (str_arr) {
+        char **p = NULL;
+        while ((p = (char **)utarray_next(str_arr, p))) {
+          cJSON_AddItemToArray(arr, cJSON_CreateString(*p));
+        }
+      }
+      cJSON_AddItemToObject(root, e->key, arr);
+      break;
+    }
+    case MAP_ARRAY_NUMBER: {
+      cJSON *arr = cJSON_CreateArray();
+      UT_array *num_arr = (UT_array *)e->value.an_val;
+      if (num_arr) {
+        float *p = NULL;
+        while ((p = (float *)utarray_next(num_arr, p))) {
+          cJSON_AddItemToArray(arr, cJSON_CreateNumber((double)*p));
+        }
+      }
+      cJSON_AddItemToObject(root, e->key, arr);
+      break;
+    }
+    case MAP_ARRAY_BOOLEAN: {
+      cJSON *arr = cJSON_CreateArray();
+      UT_array *bool_arr = (UT_array *)e->value.ab_val;
+      if (bool_arr) {
+        bool *p = NULL;
+        while ((p = (bool *)utarray_next(bool_arr, p))) {
+          cJSON_AddItemToArray(arr, cJSON_CreateBool(*p));
+        }
+      }
+      cJSON_AddItemToObject(root, e->key, arr);
+      break;
+    }
+    }
+  }
+
+  char *json_str = cJSON_PrintUnformatted(root);
+  cJSON_Delete(root);
+  return json_str;
 }
 
 /* ================================
@@ -300,11 +600,6 @@ ProcessResult run_iss(void *args) {
    Server API
 ================================ */
 
-#include "isa-test-utils/run.h"
-#include "utarray.h"
-#include <stdio.h>
-#include <stdlib.h>
-
 void start_server(void) {
   UT_array *args;
   utarray_new(args, &ut_str_icd);
@@ -346,18 +641,20 @@ void stop_server(void) {
   free(r.stderr_data);
 }
 
-void start_instrument(const char *config, const char *plugin) {
+void start_instrument(const Path *config, const Path *plugin) {
   UT_array *args;
+  char *con = path_free_to_path(path_clone(config));
+  char *plug = path_free_to_path(path_clone(plugin));
   utarray_new(args, &ut_str_icd);
 
   const char *cmd = "start";
   utarray_push_back(args, &cmd);
-  utarray_push_back(args, &config);
+  utarray_push_back(args, &con);
 
   if (plugin) {
     const char *flag = "--plugin";
     utarray_push_back(args, &flag);
-    utarray_push_back(args, &plugin);
+    utarray_push_back(args, &plug);
   }
 
   ProcessResult r = run_iss(args);
@@ -373,6 +670,8 @@ void start_instrument(const char *config, const char *plugin) {
 
   free(r.stdout_data);
   free(r.stderr_data);
+  free(con);
+  free(plug);
 }
 
 char *instrument_status(const char *name) {
@@ -496,16 +795,79 @@ static ValueType map_string_to_val_type(const char *str) {
     return VAL_TYPE_BUFFER;
   return VAL_TYPE_VOID;
 }
+char *write_script_to_temp(const char *contents) {
+  char *tmp_path = NULL;
 
-ISA_TEST_UTILS_EXPORT const MeasurementResult *
-perform_measurement(const char *script_contents, const char *variables_json) {
+#ifdef _WIN32
+  char temp_dir[MAX_PATH];
+  char temp_file[MAX_PATH];
 
-  // 1. Write the script contents out securely to an absolute scratch file
+  if (GetTempPathA(MAX_PATH, temp_dir) == 0 ||
+      GetTempFileNameA(temp_dir, "iss", 0, temp_file) == 0) {
+    fprintf(stderr,
+            "FATAL ERROR: Failed to create Windows temporary tracking file.\n");
+    exit(1);
+  }
+  tmp_path = strdup(temp_file);
+#else
+  // Reused from our earlier fix: generate name and append extension afterward
+  char template[] = "/tmp/iss-script-XXXXXX";
+  int fd = mkstemp(template);
+  if (fd < 0) {
+    perror("FATAL ERROR: mkstemp failed");
+    exit(1);
+  }
+  close(fd);
+
+  size_t path_len = strlen(template) + 5; // 4 bytes for ".lua" + 1 for null
+  tmp_path = malloc(path_len);
+  if (!tmp_path) {
+    remove(template);
+    exit(1);
+  }
+  snprintf(tmp_path, path_len, "%s.lua", template);
+  remove(template); // remove extensionless file left by mkstemp
+#endif
+
+  // Stream script data via standard I/O streams
+  FILE *f = fopen(tmp_path, "wb");
+  if (!f) {
+    fprintf(stderr,
+            "FATAL ERROR: Failed to open temp script path for writing.\n");
+    free(tmp_path);
+    exit(1);
+  }
+
+  size_t contents_len = contents ? strlen(contents) : 0;
+  if (contents_len > 0) {
+    if (fwrite(contents, 1, contents_len, f) != contents_len) {
+      fprintf(stderr, "FATAL ERROR: Failed to write full stream payloads to "
+                      "temp script.\n");
+      fclose(f);
+      remove(tmp_path);
+      free(tmp_path);
+      exit(1);
+    }
+  }
+  fclose(f);
+
+  return tmp_path; // Caller owns this string and must free() it later
+}
+
+ISA_TEST_UTILS_EXPORT const Result *
+perform_measurement(const char *script_contents, const Map *variables) {
+
   char *tmp_script_path = write_script_to_temp(script_contents);
   if (!tmp_script_path)
     return NULL;
+  char *input = map_to_json(variables);
+  if (input == NULL) {
+    fprintf(stderr, "ERROR: Variable conversion to json\n");
+    free(tmp_script_path);
+    free(input);
+    exit(1);
+  }
 
-  // 2. Prepare the execution arguments structure
   UT_array *args;
   utarray_new(args, &ut_str_icd);
 
@@ -516,11 +878,12 @@ perform_measurement(const char *script_contents, const char *variables_json) {
   utarray_push_back(args, &cmd);
   utarray_push_back(args, &tmp_script_path);
   utarray_push_back(args, &flag1);
-  utarray_push_back(args, &variables_json);
+  utarray_push_back(args, &input);
   utarray_push_back(args, &flag2);
 
   ProcessResult r = run_iss(args);
   utarray_free(args);
+  free(input);
 
   // Clean up disk footprint unlinking temp script allocation path immediately
   remove(tmp_script_path);
@@ -554,7 +917,7 @@ perform_measurement(const char *script_contents, const char *variables_json) {
   }
 
   // 4. Allocate and construct your native target matrix metadata wrapper
-  MeasurementResult *res = calloc(1, sizeof(MeasurementResult));
+  Result *res = calloc(1, sizeof(Result));
   if (!res) {
     cJSON_Delete(json);
     return NULL;
@@ -573,11 +936,11 @@ perform_measurement(const char *script_contents, const char *variables_json) {
     res->step_count = 0;
     res->steps = NULL;
     cJSON_Delete(json);
-    return (const MeasurementResult *)res;
+    return (const Result *)res;
   }
 
   res->step_count = cJSON_GetArraySize(results_arr);
-  res->steps = calloc(res->step_count, sizeof(ScriptStepResult));
+  res->steps = calloc(res->step_count, sizeof(StepResult));
 
   // 5. Serialize array indices over individual element blocks cleanly
   int idx = 0;
@@ -593,7 +956,7 @@ perform_measurement(const char *script_contents, const char *variables_json) {
     cJSON *c_time = cJSON_GetObjectItemCaseSensitive(item, "executed_at_ms");
     cJSON *c_return = cJSON_GetObjectItemCaseSensitive(item, "return");
 
-    ScriptStepResult *step = &res->steps[idx];
+    StepResult *step = &res->steps[idx];
     step->index = cJSON_IsNumber(c_idx) ? c_idx->valueint : idx;
     step->instrument =
         strdup(cJSON_IsString(c_inst) ? c_inst->valuestring : "");
@@ -665,22 +1028,21 @@ perform_measurement(const char *script_contents, const char *variables_json) {
   }
 
   cJSON_Delete(json);
-  return (const MeasurementResult *)res;
+  return (const Result *)res;
 }
 
-ISA_TEST_UTILS_EXPORT void
-free_measurement_result(const MeasurementResult *res) {
+ISA_TEST_UTILS_EXPORT void free_result(const Result *res) {
   if (!res)
     return;
 
   // Cast away the read-only constraint inside destructor safely
-  MeasurementResult *m = (MeasurementResult *)res;
+  Result *m = (Result *)res;
   free(m->status);
   free(m->script_name);
 
   if (m->steps) {
     for (int i = 0; i < m->step_count; i++) {
-      ScriptStepResult *step = &m->steps[i];
+      StepResult *step = &m->steps[i];
       free(step->instrument);
       free(step->verb);
       free(step->params_json);
@@ -899,4 +1261,30 @@ ISA_TEST_UTILS_EXPORT void release_buffer(const char *buffer_id) {
 
   free(r.stdout_data);
   free(r.stderr_data);
+}
+char *flatten_yaml(const char *format, ...) {
+  va_list args;
+  va_start(args, format);
+
+  // Predict exactly how many bytes are needed for the string format layout
+  va_list args_copy;
+  va_copy(args_copy, args);
+  int len = vsnprintf(NULL, 0, format, args_copy);
+  va_end(args_copy);
+
+  if (len < 0) {
+    va_end(args);
+    return NULL;
+  }
+
+  char *str = malloc(len + 1);
+  if (str) {
+    vsnprintf(str, len + 1, format, args);
+  }
+
+  va_end(args);
+  return str;
+}
+char *name_with_index(const char *base, int index) {
+  return flatten_yaml("%s:%d", base, index);
 }

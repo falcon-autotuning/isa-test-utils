@@ -8,7 +8,11 @@
 
 #include <cmocka.h>
 
-#include "isa-test-utils/setup.h"
+#include "internal/exec.h"
+#include "isa-test-utils.h"
+#include "internal/measurement-helpers.h"
+#include "internal/prepare_directories.h"
+#include "internal/path.h"
 #include "utarray.h"
 
 // Cross-platform environment and file access configurations
@@ -49,12 +53,6 @@ static const char *get_system_tmp_dir(void) {
 #endif
 }
 
-static bool file_exists(const char *path) {
-  if (!path)
-    return false;
-  return access(path, F_OK) == 0;
-}
-
 static char *read_entire_file(const char *path, size_t *out_len) {
   FILE *f = fopen(path, "rb");
   if (!f)
@@ -78,15 +76,6 @@ static char *read_entire_file(const char *path, size_t *out_len) {
 /* =========================================================================
    Struct Builders & Destructors
    ========================================================================= */
-
-static PairString *pair(const char *k, const char *v) {
-  PairString *p = calloc(1, sizeof(PairString));
-  if (p) {
-    p->first = strdup(k);
-    p->second = strdup(v);
-  }
-  return p;
-}
 
 static EmbeddedFile *make_file(const char *path, const char *data) {
   EmbeddedFile *f = calloc(1, sizeof(EmbeddedFile));
@@ -113,19 +102,8 @@ static void free_embedded_file_cb(void *elt) {
   free(f);
 }
 
-static void free_pair_string_cb(void *elt) {
-  PairString *p = *(PairString **)elt;
-  if (!p)
-    return;
-  free(p->first);
-  free(p->second);
-  free(p);
-}
-
 static const UT_icd embedded_file_icd = {sizeof(EmbeddedFile *), NULL, NULL,
                                          free_embedded_file_cb};
-static const UT_icd pair_string_icd = {sizeof(PairString *), NULL, NULL,
-                                       free_pair_string_cb};
 
 /* =========================================================================
    ISA Tests
@@ -141,20 +119,17 @@ static void test_prepare_isa_basic(void **state) {
   EmbeddedFile *f = make_file("a.txt", "hello");
   utarray_push_back(files, &f);
 
-  PathBuffer *root = path_buf_new(get_system_tmp_dir());
-  char *dir = prepare_isa_directory(files, root);
+  Path *root = path_new(get_system_tmp_dir());
+  Path *dir = prepare_isa_directory(files, root);
   utarray_free(files);
 
-  PathBuffer *out_pb = path_buf_new(dir);
-  path_buf_push(out_pb, "a.txt");
-  char *out = path_buf_free_to_path(out_pb);
+  path_push(dir, "a.txt");
+  char *out = path_free_to_path(dir);
 
   assert_true(file_exists(out));
 
   free(out);
-  free(dir);
-  free(root->path_str);
-  free(root);
+  path_free(root);
 }
 
 static void test_prepare_isa_tmpl(void **state) {
@@ -167,26 +142,25 @@ static void test_prepare_isa_tmpl(void **state) {
   EmbeddedFile *f = make_file("x.yml.tmpl", "expand me");
   utarray_push_back(files, &f);
 
-  PathBuffer *root = path_buf_new(get_system_tmp_dir());
-  char *dir = prepare_isa_directory(files, root);
+  Path *root = path_new(get_system_tmp_dir());
+  Path *dir = prepare_isa_directory(files, root);
   utarray_free(files);
 
-  PathBuffer *exp_pb = path_buf_new(dir);
-  path_buf_push(exp_pb, "x.yml");
-  char *expanded = path_buf_free_to_path(exp_pb);
+  Path *exp_pb = path_clone(dir);
+  path_push(exp_pb, "x.yml");
+  char *expanded = path_free_to_path(exp_pb);
 
-  PathBuffer *tmpl_pb = path_buf_new(dir);
-  path_buf_push(tmpl_pb, "x.yml.tmpl");
-  char *tmpl = path_buf_free_to_path(tmpl_pb);
+  Path *tmpl_pb = path_clone(dir);
+  path_push(tmpl_pb, "x.yml.tmpl");
+  char *tmpl = path_free_to_path(tmpl_pb);
 
   assert_true(file_exists(expanded));
   assert_false(file_exists(tmpl));
 
   free(expanded);
   free(tmpl);
-  free(dir);
-  free(root->path_str);
-  free(root);
+  path_free(dir);
+  path_free(root);
 }
 
 /* =========================================================================
@@ -196,34 +170,33 @@ static void test_prepare_isa_tmpl(void **state) {
 static void test_config_replace(void **state) {
   (void)state;
   UT_array *files;
-  UT_array *replacements;
   utarray_new(files, &embedded_file_icd);
-  utarray_new(replacements, &pair_string_icd);
-
   EmbeddedFile *f = make_file("cfg.yml.in", "hello __NAME__");
   utarray_push_back(files, &f);
 
-  PairString *p = pair("__NAME__", "world");
-  utarray_push_back(replacements, &p);
+  Replacements *replacements = replacements_new();
+  assert_non_null((void *)replacements);
 
-  PathBuffer *root = path_buf_new(get_system_tmp_dir());
-  char *dir = prepare_config_directory(files, root, replacements);
+  replacements_add(replacements, "__NAME__", "world");
+
+  Path *root = path_new(get_system_tmp_dir());
+  Path *dir = prepare_config_directory(files, root, replacements);
+
   utarray_free(files);
-  utarray_free(replacements);
-
-  PathBuffer *out_pb = path_buf_new(dir);
-  path_buf_push(out_pb, "cfg.yml");
-  char *out = path_buf_free_to_path(out_pb);
+  replacements_free(
+      replacements); // Deep-frees your pairs and keys automatically
+  Path *out_pb = path_clone(dir);
+  path_push(out_pb, "cfg.yml");
+  char *out = path_free_to_path(out_pb);
 
   char *contents = read_entire_file(out, NULL);
-  assert_non_null(contents);
-  assert_string_equal(contents, "hello world");
+  assert_non_null((void *)contents);
+  assert_string_equal(contents, "hello 'world'");
 
   free(contents);
   free(out);
-  free(dir);
-  free(root->path_str);
-  free(root);
+  path_free(dir);
+  path_free(root);
 }
 
 /* =========================================================================
@@ -238,20 +211,19 @@ static void test_plugin_extract(void **state) {
   EmbeddedFile *f = make_file("plugin.so", "binary");
   utarray_push_back(files, &f);
 
-  PathBuffer *root = path_buf_new(get_system_tmp_dir());
-  char *dir = prepare_plugin_directory(files, root);
+  Path *root = path_new(get_system_tmp_dir());
+  Path *dir = prepare_plugin_directory(files, root);
   utarray_free(files);
 
-  PathBuffer *out_pb = path_buf_new(dir);
-  path_buf_push(out_pb, "plugin.so");
-  char *out = path_buf_free_to_path(out_pb);
+  Path *out_pb = path_clone(dir);
+  path_push(out_pb, "plugin.so");
+  char *out = path_free_to_path(out_pb);
 
   assert_true(file_exists(out));
 
   free(out);
-  free(dir);
-  free(root->path_str);
-  free(root);
+  path_free(dir);
+  path_free(root);
 }
 
 /* =========================================================================

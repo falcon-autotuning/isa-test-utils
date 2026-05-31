@@ -11,6 +11,7 @@ CompileFlags:
     - -Wstrict-prototypes
     - -Wmissing-prototypes
     - -I./include
+    - -I./src/internal/
     - -I./vcpkg_installed/x64-linux-dynamic/include
 
 Diagnostics:

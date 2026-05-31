@@ -43,7 +43,9 @@ find_path(UTHASH_INCLUDE_DIRS "utarray.h")
 find_package(cJSON CONFIG REQUIRED)
 add_library(isa-test-utils SHARED
   src/run.c
-  src/setup.c
+  src/path.c
+  src/env.c
+  src/prepare_directories.c
 )
 
 target_link_libraries(isa-test-utils
@@ -61,6 +63,7 @@ generate_export_header(isa-test-utils
 target_include_directories(isa-test-utils
   PRIVATE
     ${UTHASH_INCLUDE_DIRS}
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/internal
   PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/include>

@@ -8,10 +8,15 @@ add_executable(unit_test_run
     test_run.c
 )
 
+target_include_directories(unit_test_run PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+)
+
 target_link_libraries(unit_test_run
     PRIVATE
         isa-test-utils
         cmocka::cmocka
+        cjson
 )
 
 add_test(NAME unit_test_run COMMAND unit_test_run)
@@ -21,6 +26,9 @@ add_test(NAME unit_test_run COMMAND unit_test_run)
 # =========================================
 add_executable(unit_test_setup
     test_setup.c
+)
+target_include_directories(unit_test_setup PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
 )
 
 target_link_libraries(unit_test_setup

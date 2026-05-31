@@ -1,3 +1,4 @@
+#include <cjson/cJSON.h>
 #include <cmocka.h>
 #include <stdarg.h>
 #include <stddef.h>
@@ -5,7 +6,10 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "isa-test-utils/run.h"
+#include "internal/exec.h"
+#include "internal/path.h"
+#include "isa-test-utils.h"
+#include "internal/measurement-helpers.h"
 #include "utarray.h"
 
 // Define cross-platform environment variable utility macros
@@ -121,13 +125,22 @@ static void test_stop_server(void **state) {
 static void test_start_instrument_no_plugin(void **state) {
   (void)state;
   setup_mock();
-  start_instrument("config.yml", NULL);
+
+  Path *cfg = path_new("config.yml");
+  start_instrument(cfg, NULL);
+  path_free(cfg);
 }
 
 static void test_start_instrument_with_plugin(void **state) {
   (void)state;
   setup_mock();
-  start_instrument("config.yml", "plugin.so");
+  Path *cfg = path_new("config.yml");
+  Path *plugin = path_new("plugin.so");
+
+  start_instrument(cfg, plugin);
+
+  path_free(cfg);
+  path_free(plugin);
 }
 
 static void test_stop_instrument(void **state) {
@@ -187,7 +200,17 @@ static void test_perform_measurement_success(void **state) {
 
   const char *script = "function main(ctx) ctx:log('hello') end";
 
-  const MeasurementResult *res = perform_measurement(script, "{}");
+  // Initialize and populate a mock parameters Map instead of hardcoding JSON
+  Map *vars = map_new();
+  assert_non_null((void *)vars);
+  map_add_float(vars, "target_voltage", 5.0f);
+  map_add_string(vars, "mode", "calibration");
+
+  // Call perform_measurement using our clean Map abstraction pointer
+  const Result *res = perform_measurement(script, vars);
+
+  // Clean up variables dictionary right after triggering execution
+  map_free(vars);
 
   assert_non_null((void *)res);
   assert_string_equal(res->status, "success");
@@ -195,7 +218,7 @@ static void test_perform_measurement_success(void **state) {
   assert_int_equal(res->step_count, 2);
   assert_non_null((void *)res->steps);
 
-  const ScriptStepResult *step0 = &res->steps[0];
+  const StepResult *step0 = &res->steps[0];
   assert_int_equal(step0->index, 0);
   assert_string_equal(step0->instrument, "MockInstrument1:1");
   assert_string_equal(step0->verb, "SET");
@@ -203,7 +226,7 @@ static void test_perform_measurement_success(void **state) {
   assert_int_equal(step0->return_type, VAL_TYPE_BOOL);
   assert_true(step0->return_value.b_val);
 
-  const ScriptStepResult *step1 = &res->steps[1];
+  const StepResult *step1 = &res->steps[1];
   assert_int_equal(step1->index, 4);
   assert_string_equal(step1->instrument, "Scope1");
   assert_string_equal(step1->verb, "CAPTURE");
@@ -213,7 +236,7 @@ static void test_perform_measurement_success(void **state) {
   assert_int_equal(step1->return_value.buf_val.element_count, 10000);
   assert_string_equal(step1->return_value.buf_val.data_type, "float32");
 
-  free_measurement_result(res);
+  free_result(res);
 }
 
 /* ================================
@@ -271,6 +294,122 @@ static void test_dependency_injection(void **state) {
   free(r.stderr_data);
 }
 
+static void test_map_primitive_types(void **state) {
+  (void)state;
+
+  Map *m = map_new();
+  assert_non_null((void *)m);
+
+  // Populate map with primitive data types
+  map_add_float(m, "pi", 3.14159f);
+  map_add_int(m, "count", 42);
+  map_add_string(m, "message", "hello world");
+  map_add_bool(m, "flag", true);
+
+  // Serialize map to JSON to assert internal values accurately
+  char *raw_json = map_to_json(m);
+  assert_non_null((void *)raw_json);
+
+  cJSON *root = cJSON_Parse(raw_json);
+  free(raw_json);
+  assert_non_null((void *)root);
+
+  // Assert primitive fields are present and accurately structured
+  cJSON *pi_item = cJSON_GetObjectItemCaseSensitive(root, "pi");
+  assert_true(cJSON_IsNumber(pi_item));
+  assert_float_equal((float)pi_item->valuedouble, 3.14159f, 0.00001f);
+
+  cJSON *count_item = cJSON_GetObjectItemCaseSensitive(root, "count");
+  assert_true(cJSON_IsNumber(count_item));
+  assert_int_equal(count_item->valueint, 42);
+
+  cJSON *msg_item = cJSON_GetObjectItemCaseSensitive(root, "message");
+  assert_true(cJSON_IsString(msg_item));
+  assert_string_equal(msg_item->valuestring, "hello world");
+
+  cJSON *flag_item = cJSON_GetObjectItemCaseSensitive(root, "flag");
+  assert_true(cJSON_IsBool(flag_item));
+  assert_true(cJSON_IsTrue(flag_item));
+
+  cJSON_Delete(root);
+  map_free(m);
+}
+
+/* =========================================================================
+   3. Complex Nested Array Unit Tests
+   ========================================================================= */
+
+static void test_map_nested_arrays(void **state) {
+  (void)state;
+
+  Map *m = map_new();
+  assert_non_null((void *)m);
+
+  // --- 1. Populate String Array ---
+  UT_array *str_arr;
+  utarray_new(str_arr, &ut_str_icd);
+  const char *s1 = "abc";
+  const char *s2 = "xyz";
+  utarray_push_back(str_arr, &s1);
+  utarray_push_back(str_arr, &s2);
+  map_add_array_string(m, "strings", (void *)str_arr);
+  utarray_free(str_arr); // Safe to free local array right after map deep-copies
+
+  // --- 2. Populate Number Array ---
+  static const UT_icd native_float_icd = {sizeof(float), NULL, NULL, NULL};
+  UT_array *num_arr;
+  utarray_new(num_arr, &native_float_icd);
+  float f1 = 10.5f;
+  float f2 = -2.2f;
+  utarray_push_back(num_arr, &f1);
+  utarray_push_back(num_arr, &f2);
+  map_add_array_number(m, "numbers", (void *)num_arr);
+  utarray_free(num_arr);
+
+  // --- 3. Populate Boolean Array ---
+  static const UT_icd native_bool_icd = {sizeof(bool), NULL, NULL, NULL};
+  UT_array *bool_arr;
+  utarray_new(bool_arr, &native_bool_icd);
+  bool b1 = true;
+  bool b2 = false;
+  utarray_push_back(bool_arr, &b1);
+  utarray_push_back(bool_arr, &b2);
+  map_add_array_bool(m, "booleans", (void *)bool_arr);
+  utarray_free(bool_arr);
+
+  // --- 4. Serialize and Verify Nested JSON Structures ---
+  char *raw_json = map_to_json(m);
+  cJSON *root = cJSON_Parse(raw_json);
+  free(raw_json);
+  assert_non_null((void *)root);
+
+  // Validate String Array contents
+  cJSON *j_str_arr = cJSON_GetObjectItemCaseSensitive(root, "strings");
+  assert_true(cJSON_IsArray(j_str_arr));
+  assert_int_equal(cJSON_GetArraySize(j_str_arr), 2);
+  assert_string_equal(cJSON_GetArrayItem(j_str_arr, 0)->valuestring, "abc");
+  assert_string_equal(cJSON_GetArrayItem(j_str_arr, 1)->valuestring, "xyz");
+
+  // Validate Number Array contents
+  cJSON *j_num_arr = cJSON_GetObjectItemCaseSensitive(root, "numbers");
+  assert_true(cJSON_IsArray(j_num_arr));
+  assert_int_equal(cJSON_GetArraySize(j_num_arr), 2);
+  assert_float_equal((float)cJSON_GetArrayItem(j_num_arr, 0)->valuedouble,
+                     10.5f, 0.00001f);
+  assert_float_equal((float)cJSON_GetArrayItem(j_num_arr, 1)->valuedouble,
+                     -2.2f, 0.00001f);
+
+  // Validate Boolean Array contents
+  cJSON *j_bool_arr = cJSON_GetObjectItemCaseSensitive(root, "booleans");
+  assert_true(cJSON_IsArray(j_bool_arr));
+  assert_int_equal(cJSON_GetArraySize(j_bool_arr), 2);
+  assert_true(cJSON_IsTrue(cJSON_GetArrayItem(j_bool_arr, 0)));
+  assert_true(cJSON_IsFalse(cJSON_GetArrayItem(j_bool_arr, 1)));
+
+  cJSON_Delete(root);
+  map_free(m);
+}
+
 /* ================================
    Main Engine Integration
 ================================ */
@@ -305,6 +444,11 @@ int main(int argc, char **argv) {
 
       /* DI */
       cmocka_unit_test(test_dependency_injection),
+
+      /* map */
+      cmocka_unit_test(test_perform_measurement_success),
+      cmocka_unit_test(test_map_primitive_types),
+      cmocka_unit_test(test_map_nested_arrays),
   };
 
   return cmocka_run_group_tests(tests, NULL, NULL);
