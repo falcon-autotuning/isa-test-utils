@@ -1002,7 +1002,19 @@ perform_measurement(const char *script_contents, const Map *variables) {
     StepResult *step = &res->steps[idx];
     cJSON *c_idx = cJSON_GetObjectItemCaseSensitive(item, "index");
     step->index = (c_idx && cJSON_IsNumber(c_idx)) ? c_idx->valueint : idx;
-    step->instrument = strdup((c_inst && cJSON_IsString(c_inst)) ? c_inst->valuestring : "");
+    
+    cJSON *c_chan = cJSON_GetObjectItemCaseSensitive(item, "channel");
+    if (c_inst && cJSON_IsString(c_inst)) {
+      if (c_chan && cJSON_IsNumber(c_chan) && c_chan->valueint >= 0) {
+        char buf[256];
+        snprintf(buf, sizeof(buf), "%s:%d", c_inst->valuestring, c_chan->valueint);
+        step->instrument = strdup(buf);
+      } else {
+        step->instrument = strdup(c_inst->valuestring);
+      }
+    } else {
+      step->instrument = strdup("");
+    }
     step->verb = strdup((c_verb && cJSON_IsString(c_verb)) ? c_verb->valuestring : "");
     step->params_json = strdup("{}"); // Legacy parameter payload (no longer populated in results)
 
