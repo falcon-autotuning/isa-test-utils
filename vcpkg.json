@@ -1,6 +1,6 @@
 {
   "name": "isa-test-utils",
-  "version": "1.2.3",
+  "version": "1.2.4",
   "description": "A set of utilities to help with writing tests for instruments and plugins for the instrument-script-server",
   "homepage": "https://github.com/falcon-autotuning/isa-test-utils",
   "dependencies": [
