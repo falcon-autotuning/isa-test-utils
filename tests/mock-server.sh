@@ -39,20 +39,16 @@ daemon)
   fi
   ;;
 
-start)
-  echo "instrument started: $2"
-  echo "debug: start ok" >&2
-  exit 0
-  ;;
-
-stop)
-  echo "instrument stopped: $2"
-  echo "debug: stop ok" >&2
-  exit 0
-  ;;
-
-instrument)
-  if [ "$2" = "status" ]; then
+inst)
+  if [ "$2" = "start" ]; then
+    echo "Instrument started successfully"
+    echo "debug: start ok" >&2
+    exit 0
+  elif [ "$2" = "stop" ]; then
+    echo "Stopped instrument: $3"
+    echo "debug: stop ok" >&2
+    exit 0
+  elif [ "$2" = "status" ]; then
     echo "instrument OK: $3"
     echo "debug: status ok" >&2
     exit 0
@@ -69,34 +65,52 @@ measure)
   done
 
   if [ "$is_json" = "1" ]; then
-    # Return a comprehensive structured schema layout matching your client parser expectations
     echo "{"
-    echo "  \"status\": \"success\","
-    echo "  \"script\": \"iv_curve.lua\","
-    echo "  \"results\": ["
+    echo "  \"ok\": true,"
+    echo "  \"message\": [\"Measurement complete\"],"
+    echo "  \"output\": ["
     echo "    {"
-    echo "      \"index\": 0,"
-    echo "      \"instrument\": \"MockInstrument1:1\","
-    echo "      \"verb\": \"SET\","
-    echo "      \"params\": {\"value\": 5.0},"
-    echo "      \"executed_at_ms\": 1704720615123,"
-    echo "      \"return\": {"
-    echo "        \"type\": \"bool\","
-    echo "        \"value\": true"
-    echo "      }"
+    echo "      \"jobId\": 1"
     echo "    },"
     echo "    {"
-    echo "      \"index\": 4,"
-    echo "      \"instrument\": \"Scope1\","
-    echo "      \"verb\": \"CAPTURE\","
-    echo "      \"params\": {},"
-    echo "      \"executed_at_ms\": 1704720615127,"
-    echo "      \"return\": {"
-    echo "        \"type\": \"buffer\","
-    echo "        \"buffer_id\": \"buf_abc123\","
-    echo "        \"element_count\": 10000,"
-    echo "        \"data_type\": \"float32\""
-    echo "      }"
+    echo "      \"status\": \"JOB_STATUS_COMPLETED\","
+    echo "      \"script\": \"iv_curve.lua\","
+    echo "      \"results\": ["
+    echo "        {"
+    echo "          \"index\": 0,"
+    echo "          \"instrumentName\": \"MockInstrument1:1\","
+    echo "          \"verb\": \"SET\","
+    echo "          \"executedAt\": \"2026-07-01T20:59:00.000Z\","
+    echo "          \"param\": ["
+    echo "            {"
+    echo "              \"name\": \"return\","
+    echo "              \"type\": \"LUA_TYPES_BOOL\","
+    echo "              \"value\": {"
+    echo "                \"b\": true"
+    echo "              }"
+    echo "            }"
+    echo "          ]"
+    echo "        },"
+    echo "        {"
+    echo "          \"index\": 4,"
+    echo "          \"instrumentName\": \"Scope1\","
+    echo "          \"verb\": \"CAPTURE\","
+    echo "          \"executedAt\": \"2026-07-01T20:59:01.000Z\","
+    echo "          \"param\": ["
+    echo "            {"
+    echo "              \"name\": \"return\","
+    echo "              \"type\": \"LUA_TYPES_DATA_BUFFER\","
+    echo "              \"value\": {"
+    echo "                \"s\": \"buf_abc123\""
+    echo "              },"
+    echo "              \"dbmeta\": {"
+    echo "                \"elementCount\": 10000,"
+    echo "                \"dataType\": 1"
+    echo "              }"
+    echo "            }"
+    echo "          ]"
+    echo "        }"
+    echo "      ]"
     echo "    }"
     echo "  ]"
     echo "}"
@@ -108,35 +122,35 @@ measure)
   exit 0
   ;;
 
-read-buffer)
-  # Check if the caller requested a structured JSON representation
-  is_json=0
-  for arg in "$@"; do
-    if [ "$arg" = "--json" ]; then
-      is_json=1
+buffer)
+  if [ "$2" = "read" ]; then
+    is_json=0
+    for arg in "$@"; do
+      if [ "$arg" = "--json" ]; then
+        is_json=1
+      fi
+    done
+
+    if [ "$is_json" = "1" ]; then
+      echo "{"
+      echo "  \"ok\": true,"
+      echo "  \"output\": ["
+      echo "    {"
+      echo "      \"buffer_id\": \"$3\","
+      echo "      \"element_count\": 3,"
+      echo "      \"data_type\": \"float64\","
+      echo "      \"data\": [1.0, 2.5, 3.14159]"
+      echo "    }"
+      echo "  ]"
+      echo "}"
+    else
+      echo "Released buffer: $3"
     fi
-  done
-
-  if [ "$is_json" = "1" ]; then
-    # Return a fully valid JSON block simulating a float64 buffer of 3 items
-    echo "{"
-    echo "  \"ok\": true,"
-    echo "  \"buffer_id\": \"$2\","
-    echo "  \"element_count\": 3,"
-    echo "  \"data_type\": \"float64\","
-    echo "  \"data\": [1.0, 2.5, 3.14159]"
-    echo "}"
-  else
-    # Fallback to standard human-readable format if evaluated raw
-    echo "Released buffer: $2"
+    exit 0
+  elif [ "$2" = "release" ]; then
+    echo "Released buffer: $3" >&2
+    exit 0
   fi
-  echo "ERROR: unexpected no json" >&2
-  exit 0
-  ;;
-
-release-buffer)
-  echo "Released buffer: $2" >&2
-  exit 0
   ;;
 esac
 

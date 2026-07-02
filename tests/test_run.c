@@ -223,18 +223,24 @@ static void test_perform_measurement_success(void **state) {
   assert_string_equal(step0->instrument, "MockInstrument1:1");
   assert_string_equal(step0->verb, "SET");
   assert_non_null((void *)step0->params_json);
-  assert_int_equal(step0->return_type, VAL_TYPE_BOOL);
-  assert_true(step0->return_value.b_val);
+  assert_int_equal(step0->return_count, 1);
+  assert_non_null((void *)step0->returns);
+  assert_string_equal(step0->returns[0].name, "return");
+  assert_int_equal(step0->returns[0].type, VAL_TYPE_BOOL);
+  assert_true(step0->returns[0].value.b_val);
 
   const StepResult *step1 = &res->steps[1];
   assert_int_equal(step1->index, 4);
   assert_string_equal(step1->instrument, "Scope1");
   assert_string_equal(step1->verb, "CAPTURE");
-  assert_int_equal(step1->return_type, VAL_TYPE_BUFFER);
+  assert_int_equal(step1->return_count, 1);
+  assert_non_null((void *)step1->returns);
+  assert_string_equal(step1->returns[0].name, "return");
+  assert_int_equal(step1->returns[0].type, VAL_TYPE_BUFFER);
 
-  assert_string_equal(step1->return_value.buf_val.buffer_id, "buf_abc123");
-  assert_int_equal(step1->return_value.buf_val.element_count, 10000);
-  assert_string_equal(step1->return_value.buf_val.data_type, "float32");
+  assert_string_equal(step1->returns[0].value.buf_val.buffer_id, "buf_abc123");
+  assert_int_equal(step1->returns[0].value.buf_val.element_count, 10000);
+  assert_string_equal(step1->returns[0].value.buf_val.data_type, "float32");
 
   free_result(res);
 }

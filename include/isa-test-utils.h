@@ -210,6 +210,15 @@ typedef union {
 } ReturnValue;
 
 /**
+ * @brief Named and typed return value.
+ */
+typedef struct {
+  char *name;           /**< Return parameter name (heap) */
+  ValueType type;       /**< Runtime type of the value */
+  ReturnValue value;    /**< Value of the return parameter */
+} StepReturn;
+
+/**
  * @brief Result of a single step in a script.
  */
 typedef struct {
@@ -218,8 +227,8 @@ typedef struct {
   char *verb;
   char *params_json;
   uint64_t executed_at_ms;
-  ValueType return_type;
-  ReturnValue return_value;
+  int return_count;
+  StepReturn *returns;
 } StepResult;
 
 /**

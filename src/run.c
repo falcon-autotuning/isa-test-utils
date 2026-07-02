@@ -10,6 +10,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -647,8 +648,10 @@ void start_instrument(const Path *config, const Path *plugin) {
   char *plug = path_free_to_path(path_clone(plugin));
   utarray_new(args, &ut_str_icd);
 
-  const char *cmd = "start";
+  const char *cmd = "inst";
+  const char *subcmd = "start";
   utarray_push_back(args, &cmd);
+  utarray_push_back(args, &subcmd);
   utarray_push_back(args, &con);
 
   if (plugin) {
@@ -678,7 +681,7 @@ char *instrument_status(const char *name) {
   UT_array *args;
   utarray_new(args, &ut_str_icd);
 
-  const char *arg1 = "instrument";
+  const char *arg1 = "inst";
   const char *arg2 = "status";
   utarray_push_back(args, &arg1);
   utarray_push_back(args, &arg2);
@@ -695,8 +698,10 @@ void stop_instrument(const char *name) {
   UT_array *args;
   utarray_new(args, &ut_str_icd);
 
-  const char *cmd = "stop";
+  const char *cmd = "inst";
+  const char *subcmd = "stop";
   utarray_push_back(args, &cmd);
+  utarray_push_back(args, &subcmd);
   utarray_push_back(args, &name);
 
   ProcessResult r = run_iss(args);
@@ -872,7 +877,7 @@ perform_measurement(const char *script_contents, const Map *variables) {
   utarray_new(args, &ut_str_icd);
 
   const char *cmd = "measure";
-  const char *flag1 = "--globals";
+  const char *flag1 = "--globals-json";
   const char *flag2 = "--json";
 
   utarray_push_back(args, &cmd);
@@ -916,6 +921,39 @@ perform_measurement(const char *script_contents, const Map *variables) {
     exit(1);
   }
 
+  // Under the new gRPC CLI, the entire JSON structure is a wrapper:
+  // { "ok": true, "message": [...], "output": [...] }
+  cJSON *ok_obj = cJSON_GetObjectItemCaseSensitive(json, "ok");
+  if (!ok_obj || !cJSON_IsBool(ok_obj) || !ok_obj->valueint) {
+    fprintf(stderr, "ERROR: Measurement output marked ok: false\n");
+    cJSON_Delete(json);
+    exit(1);
+  }
+
+  cJSON *output_arr = cJSON_GetObjectItemCaseSensitive(json, "output");
+  if (!output_arr || !cJSON_IsArray(output_arr)) {
+    fprintf(stderr, "ERROR: Invalid output format from script server (no output array)\n");
+    cJSON_Delete(json);
+    exit(1);
+  }
+
+  // Find the last item in output array that contains the results key (MeasureJobResultResponse)
+  cJSON *job_result_obj = NULL;
+  int output_size = cJSON_GetArraySize(output_arr);
+  for (int i = output_size - 1; i >= 0; --i) {
+    cJSON *temp = cJSON_GetArrayItem(output_arr, i);
+    if (temp && cJSON_GetObjectItemCaseSensitive(temp, "results")) {
+      job_result_obj = temp;
+      break;
+    }
+  }
+
+  if (!job_result_obj) {
+    fprintf(stderr, "ERROR: No MeasureJobResultResponse found in output stream\n");
+    cJSON_Delete(json);
+    exit(1);
+  }
+
   // 4. Allocate and construct your native target matrix metadata wrapper
   Result *res = calloc(1, sizeof(Result));
   if (!res) {
@@ -923,14 +961,21 @@ perform_measurement(const char *script_contents, const Map *variables) {
     return NULL;
   }
 
-  cJSON *status_obj = cJSON_GetObjectItemCaseSensitive(json, "status");
-  cJSON *script_obj = cJSON_GetObjectItemCaseSensitive(json, "script");
-  cJSON *results_arr = cJSON_GetObjectItemCaseSensitive(json, "results");
+  cJSON *status_obj = cJSON_GetObjectItemCaseSensitive(job_result_obj, "status");
+  cJSON *results_arr = cJSON_GetObjectItemCaseSensitive(job_result_obj, "results");
 
-  res->status =
-      strdup(cJSON_IsString(status_obj) ? status_obj->valuestring : "failure");
-  res->script_name =
-      strdup(cJSON_IsString(script_obj) ? script_obj->valuestring : "unknown");
+  if (status_obj && cJSON_IsString(status_obj) && 
+      (strcmp(status_obj->valuestring, "JOB_STATUS_COMPLETED") == 0 ||
+       strcmp(status_obj->valuestring, "3") == 0)) {
+    res->status = strdup("success");
+  } else {
+    res->status = strdup("failure");
+  }
+  cJSON *script_obj = cJSON_GetObjectItemCaseSensitive(job_result_obj, "script");
+  if (!script_obj) {
+    script_obj = cJSON_GetObjectItemCaseSensitive(json, "script");
+  }
+  res->script_name = strdup((script_obj && cJSON_IsString(script_obj)) ? script_obj->valuestring : "unknown");
 
   if (!cJSON_IsArray(results_arr)) {
     res->step_count = 0;
@@ -949,80 +994,113 @@ perform_measurement(const char *script_contents, const Map *variables) {
     if (idx >= res->step_count)
       break;
 
-    cJSON *c_idx = cJSON_GetObjectItemCaseSensitive(item, "index");
-    cJSON *c_inst = cJSON_GetObjectItemCaseSensitive(item, "instrument");
+    cJSON *c_inst = cJSON_GetObjectItemCaseSensitive(item, "instrumentName");
     cJSON *c_verb = cJSON_GetObjectItemCaseSensitive(item, "verb");
-    cJSON *c_params = cJSON_GetObjectItemCaseSensitive(item, "params");
-    cJSON *c_time = cJSON_GetObjectItemCaseSensitive(item, "executed_at_ms");
-    cJSON *c_return = cJSON_GetObjectItemCaseSensitive(item, "return");
+    cJSON *c_time = cJSON_GetObjectItemCaseSensitive(item, "executedAt");
+    cJSON *c_param_arr = cJSON_GetObjectItemCaseSensitive(item, "param");
 
     StepResult *step = &res->steps[idx];
-    step->index = cJSON_IsNumber(c_idx) ? c_idx->valueint : idx;
-    step->instrument =
-        strdup(cJSON_IsString(c_inst) ? c_inst->valuestring : "");
-    step->verb = strdup(cJSON_IsString(c_verb) ? c_verb->valuestring : "");
+    cJSON *c_idx = cJSON_GetObjectItemCaseSensitive(item, "index");
+    step->index = (c_idx && cJSON_IsNumber(c_idx)) ? c_idx->valueint : idx;
+    step->instrument = strdup((c_inst && cJSON_IsString(c_inst)) ? c_inst->valuestring : "");
+    step->verb = strdup((c_verb && cJSON_IsString(c_verb)) ? c_verb->valuestring : "");
+    step->params_json = strdup("{}"); // Legacy parameter payload (no longer populated in results)
 
-    // Preserve custom context mapping fields using printed unformatted strings
-    if (c_params) {
-      step->params_json = cJSON_PrintUnformatted(c_params);
+    // Parse executedAt timestamp
+    if (c_time && cJSON_IsString(c_time)) {
+      int y = 0, mon = 0, d = 0, hr = 0, min = 0;
+      float fsec = 0.0f;
+      if (sscanf(c_time->valuestring, "%d-%d-%dT%d:%d:%f", &y, &mon, &d, &hr, &min, &fsec) == 6) {
+        struct tm tm_val = {0};
+        tm_val.tm_year = y - 1900;
+        tm_val.tm_mon = mon - 1;
+        tm_val.tm_mday = d;
+        tm_val.tm_hour = hr;
+        tm_val.tm_min = min;
+        tm_val.tm_sec = (int)fsec;
+        time_t epoch_sec = mktime(&tm_val);
+        step->executed_at_ms = (uint64_t)epoch_sec * 1000 + (uint64_t)((fsec - (int)fsec) * 1000);
+      } else {
+        step->executed_at_ms = 0;
+      }
     } else {
-      step->params_json = strdup("{}");
+      step->executed_at_ms = 0;
     }
 
-    step->executed_at_ms =
-        cJSON_IsNumber(c_time) ? (uint64_t)c_time->valuedouble : 0;
+    step->return_count = 0;
+    step->returns = NULL;
 
-    // Evaluate polymorph variant structures based on return properties
-    if (c_return && cJSON_IsObject(c_return)) {
-      cJSON *type_token = cJSON_GetObjectItemCaseSensitive(c_return, "type");
-      cJSON *val_token = cJSON_GetObjectItemCaseSensitive(c_return, "value");
+    if (c_param_arr && cJSON_IsArray(c_param_arr)) {
+      int param_size = cJSON_GetArraySize(c_param_arr);
+      if (param_size > 0) {
+        step->returns = calloc(param_size, sizeof(StepReturn));
+        if (step->returns) {
+          int actual_returns = 0;
+          for (int p_idx = 0; p_idx < param_size; ++p_idx) {
+            cJSON *p_item = cJSON_GetArrayItem(c_param_arr, p_idx);
+            if (!p_item) continue;
+            cJSON *p_name = cJSON_GetObjectItemCaseSensitive(p_item, "name");
+            cJSON *p_type = cJSON_GetObjectItemCaseSensitive(p_item, "type");
+            cJSON *p_val = cJSON_GetObjectItemCaseSensitive(p_item, "value");
 
-      const char *type_str =
-          cJSON_IsString(type_token) ? type_token->valuestring : "void";
-      step->return_type = map_string_to_val_type(type_str);
+            if (p_name && cJSON_IsString(p_name) && p_type && cJSON_IsString(p_type) && p_val) {
+              StepReturn *ret = &step->returns[actual_returns];
+              ret->name = strdup(p_name->valuestring);
+              const char *type_str = p_type->valuestring;
 
-      switch (step->return_type) {
-      case VAL_TYPE_DOUBLE:
-        step->return_value.d_val =
-            cJSON_IsNumber(val_token) ? val_token->valuedouble : 0.0;
-        break;
-      case VAL_TYPE_INT64:
-        step->return_value.i_val =
-            cJSON_IsNumber(val_token) ? (int64_t)val_token->valuedouble : 0;
-        break;
-      case VAL_TYPE_STRING:
-        step->return_value.s_val =
-            strdup(cJSON_IsString(val_token) ? val_token->valuestring : "");
-        break;
-      case VAL_TYPE_BOOL:
-        step->return_value.b_val =
-            cJSON_IsBool(val_token) ? cJSON_IsTrue(val_token) : false;
-        break;
-      case VAL_TYPE_BUFFER: {
-        cJSON *c_buf_id =
-            cJSON_GetObjectItemCaseSensitive(c_return, "buffer_id");
-        cJSON *c_buf_count =
-            cJSON_GetObjectItemCaseSensitive(c_return, "element_count");
-        cJSON *c_buf_type =
-            cJSON_GetObjectItemCaseSensitive(c_return, "data_type");
+              ret->type = VAL_TYPE_VOID;
+              if (strcmp(type_str, "LUA_TYPES_DOUBLE") == 0 || strcmp(type_str, "LUA_TYPES_DOUBLE_ARRAY") == 0) {
+                ret->type = VAL_TYPE_DOUBLE;
+                cJSON *d_obj = cJSON_GetObjectItemCaseSensitive(p_val, "d");
+                ret->value.d_val = (d_obj && cJSON_IsNumber(d_obj)) ? d_obj->valuedouble : 0.0;
+              } else if (strcmp(type_str, "LUA_TYPES_INT64") == 0) {
+                ret->type = VAL_TYPE_INT64;
+                cJSON *i_obj = cJSON_GetObjectItemCaseSensitive(p_val, "i");
+                ret->value.i_val = (i_obj && cJSON_IsNumber(i_obj)) ? (int64_t)i_obj->valuedouble : 0;
+              } else if (strcmp(type_str, "LUA_TYPES_BOOL") == 0) {
+                ret->type = VAL_TYPE_BOOL;
+                cJSON *b_obj = cJSON_GetObjectItemCaseSensitive(p_val, "b");
+                ret->value.b_val = (b_obj && cJSON_IsBool(b_obj)) ? b_obj->valueint : false;
+              } else if (strcmp(type_str, "LUA_TYPES_STRING") == 0) {
+                ret->type = VAL_TYPE_STRING;
+                cJSON *s_obj = cJSON_GetObjectItemCaseSensitive(p_val, "s");
+                ret->value.s_val = strdup((s_obj && cJSON_IsString(s_obj)) ? s_obj->valuestring : "");
+              } else if (strcmp(type_str, "LUA_TYPES_DATA_BUFFER") == 0) {
+                ret->type = VAL_TYPE_BUFFER;
+                cJSON *s_obj = cJSON_GetObjectItemCaseSensitive(p_val, "s");
+                cJSON *dbmeta = cJSON_GetObjectItemCaseSensitive(p_item, "dbmeta");
 
-        BufferReturn *b_ret = &step->return_value.buf_val;
-        b_ret->buffer_id =
-            strdup(cJSON_IsString(c_buf_id) ? c_buf_id->valuestring : "");
+                BufferReturn *b_ret = &ret->value.buf_val;
+                b_ret->buffer_id = strdup((s_obj && cJSON_IsString(s_obj)) ? s_obj->valuestring : "");
 
-        b_ret->element_count =
-            (size_t)(cJSON_IsNumber(c_buf_count) ? c_buf_count->valueint : 0);
-
-        b_ret->data_type = strdup(
-            cJSON_IsString(c_buf_type) ? c_buf_type->valuestring : "void");
-        break;
+                size_t el_count = 0;
+                const char *dt_str = "void";
+                if (dbmeta) {
+                  cJSON *c_buf_count = cJSON_GetObjectItemCaseSensitive(dbmeta, "elementCount");
+                  cJSON *c_buf_type = cJSON_GetObjectItemCaseSensitive(dbmeta, "dataType");
+                  if (c_buf_count && cJSON_IsNumber(c_buf_count)) {
+                    el_count = c_buf_count->valueint;
+                  }
+                  if (c_buf_type && cJSON_IsNumber(c_buf_type)) {
+                    int dt_val = c_buf_type->valueint;
+                    if (dt_val == 0) dt_str = "uint8";
+                    else if (dt_val == 1) dt_str = "float32";
+                    else if (dt_val == 2) dt_str = "float64";
+                    else if (dt_val == 3) dt_str = "int32";
+                    else if (dt_val == 4) dt_str = "int64";
+                    else if (dt_val == 5) dt_str = "uint32";
+                    else if (dt_val == 6) dt_str = "uint64";
+                  }
+                }
+                b_ret->element_count = el_count;
+                b_ret->data_type = strdup(dt_str);
+              }
+              actual_returns++;
+            }
+          }
+          step->return_count = actual_returns;
+        }
       }
-      case VAL_TYPE_VOID:
-      default:
-        break;
-      }
-    } else {
-      step->return_type = VAL_TYPE_VOID;
     }
     idx++;
   }
@@ -1047,11 +1125,18 @@ ISA_TEST_UTILS_EXPORT void free_result(const Result *res) {
       free(step->verb);
       free(step->params_json);
 
-      if (step->return_type == VAL_TYPE_STRING) {
-        free(step->return_value.s_val);
-      } else if (step->return_type == VAL_TYPE_BUFFER) {
-        free(step->return_value.buf_val.buffer_id);
-        free(step->return_value.buf_val.data_type);
+      if (step->returns) {
+        for (int r_idx = 0; r_idx < step->return_count; r_idx++) {
+          StepReturn *ret = &step->returns[r_idx];
+          free(ret->name);
+          if (ret->type == VAL_TYPE_STRING) {
+            free(ret->value.s_val);
+          } else if (ret->type == VAL_TYPE_BUFFER) {
+            free(ret->value.buf_val.buffer_id);
+            free(ret->value.buf_val.data_type);
+          }
+        }
+        free(step->returns);
       }
     }
     free(m->steps);
@@ -1105,10 +1190,12 @@ ISA_TEST_UTILS_EXPORT const buffer *read_buffer(const char *buffer_id) {
   UT_array *args;
   utarray_new(args, &ut_str_icd);
 
-  const char *cmd = "read-buffer";
+  const char *cmd = "buffer";
+  const char *subcmd = "read";
   const char *json_flag = "--json";
 
   utarray_push_back(args, &cmd);
+  utarray_push_back(args, &subcmd);
   utarray_push_back(args, &buffer_id);
   utarray_push_back(args, &json_flag);
 
@@ -1138,17 +1225,43 @@ ISA_TEST_UTILS_EXPORT const buffer *read_buffer(const char *buffer_id) {
     exit(1);
   }
 
+  // Under the new gRPC CLI, the entire JSON structure is a wrapper:
+  // { "ok": true, "message": [...], "output": [...] }
   cJSON *ok_obj = cJSON_GetObjectItemCaseSensitive(json, "ok");
-  if (!cJSON_IsBool(ok_obj) || !ok_obj->valueint) {
-    fprintf(stderr, "ERROR: Buffer response marked as failed ('ok': false)\n");
+  if (!ok_obj || !cJSON_IsBool(ok_obj) || !ok_obj->valueint) {
+    fprintf(stderr, "ERROR: Buffer response marked as failed or missing 'ok'\n");
     cJSON_Delete(json);
     exit(1);
   }
 
-  cJSON *id_obj = cJSON_GetObjectItemCaseSensitive(json, "buffer_id");
-  cJSON *count_obj = cJSON_GetObjectItemCaseSensitive(json, "element_count");
-  cJSON *type_obj = cJSON_GetObjectItemCaseSensitive(json, "data_type");
-  cJSON *data_array = cJSON_GetObjectItemCaseSensitive(json, "data");
+  cJSON *output_arr = cJSON_GetObjectItemCaseSensitive(json, "output");
+  if (!output_arr || !cJSON_IsArray(output_arr)) {
+    fprintf(stderr, "ERROR: Invalid buffer output format (no output array)\n");
+    cJSON_Delete(json);
+    exit(1);
+  }
+
+  cJSON *buffer_data_obj = NULL;
+  int output_size = cJSON_GetArraySize(output_arr);
+  for (int i = 0; i < output_size; ++i) {
+    cJSON *temp = cJSON_GetArrayItem(output_arr, i);
+    if (temp && cJSON_GetObjectItemCaseSensitive(temp, "buffer_id") &&
+        cJSON_GetObjectItemCaseSensitive(temp, "data")) {
+      buffer_data_obj = temp;
+      break;
+    }
+  }
+
+  if (!buffer_data_obj) {
+    fprintf(stderr, "ERROR: Buffer data payload not found in CLI output wrapper\n");
+    cJSON_Delete(json);
+    exit(1);
+  }
+
+  cJSON *id_obj = cJSON_GetObjectItemCaseSensitive(buffer_data_obj, "buffer_id");
+  cJSON *count_obj = cJSON_GetObjectItemCaseSensitive(buffer_data_obj, "element_count");
+  cJSON *type_obj = cJSON_GetObjectItemCaseSensitive(buffer_data_obj, "data_type");
+  cJSON *data_array = cJSON_GetObjectItemCaseSensitive(buffer_data_obj, "data");
 
   if (!cJSON_IsString(id_obj) || !cJSON_IsNumber(count_obj) ||
       !cJSON_IsString(type_obj) || !cJSON_IsArray(data_array)) {
@@ -1176,8 +1289,7 @@ ISA_TEST_UTILS_EXPORT const buffer *read_buffer(const char *buffer_id) {
 
   buf_res->buffer_id = strdup(id_obj->valuestring);
   buf_res->element_count = count_obj->valueint;
-  buf_res->data_type =
-      mapped_type; // Maps straight to your new ArrayType enum field
+  buf_res->data_type = mapped_type;
 
   // Allocate continuous heap memory for the parsed data block array
   buf_res->data = malloc(buf_res->element_count * element_size);
@@ -1188,8 +1300,7 @@ ISA_TEST_UTILS_EXPORT const buffer *read_buffer(const char *buffer_id) {
     return NULL;
   }
 
-  // Iterate over the JSON array elements and parse directly into destination
-  // pointers
+  // Iterate over the JSON array elements and parse directly into destination pointers
   int i = 0;
   cJSON *element = NULL;
   cJSON_ArrayForEach(element, data_array) {
@@ -1243,9 +1354,11 @@ ISA_TEST_UTILS_EXPORT void release_buffer(const char *buffer_id) {
   UT_array *args;
   utarray_new(args, &ut_str_icd);
 
-  const char *cmd = "release-buffer";
+  const char *cmd = "buffer";
+  const char *subcmd = "release";
 
   utarray_push_back(args, &cmd);
+  utarray_push_back(args, &subcmd);
   utarray_push_back(args, &buffer_id);
 
   ProcessResult r = run_iss(args);
